@@ -5,13 +5,14 @@ import sys
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from google import genai
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-
 TIMEZONE = ZoneInfo("Asia/Kolkata")
 SCOPES = ["https://www.googleapis.com/auth/youtube.force-ssl"]
+AUTHOR = "Mahant Rajesh Kumar Tiwari"
 
 
 def load_config():
@@ -20,25 +21,19 @@ def load_config():
 
 
 def get_youtube():
-    token_json = os.environ.get("YOUTUBE_TOKEN_JSON")
+    raw = os.environ.get("YOUTUBE_TOKEN_JSON")
+    if not raw:
+        raise RuntimeError("Missing YOUTUBE_TOKEN_JSON secret.")
 
-    if not token_json:
-        raise RuntimeError(
-            "GitHub Secret YOUTUBE_TOKEN_JSON is missing."
-        )
-
-    token_data = json.loads(token_json)
     credentials = Credentials.from_authorized_user_info(
-        token_data, SCOPES
+        json.loads(raw), SCOPES
     )
 
     if credentials.expired and credentials.refresh_token:
         credentials.refresh(Request())
 
     if not credentials.valid:
-        raise RuntimeError(
-            "YouTube OAuth credentials are invalid or expired."
-        )
+        raise RuntimeError("YouTube OAuth credentials are invalid.")
 
     return build(
         "youtube", "v3",
@@ -47,92 +42,132 @@ def get_youtube():
     )
 
 
+def get_ai_title(slot, lesson):
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("Missing GEMINI_API_KEY secret.")
+
+    client = genai.Client(api_key=api_key)
+
+    prompt = f"""
+You are a YouTube SEO title writer for a Hindu devotional channel.
+
+Programme: {slot["key"]}
+Verified chapter/lesson: {lesson}
+
+Create ONE searchable YouTube title.
+Rules:
+- Start with the lesson/chapter topic, not a generic channel slogan.
+- Use relevant common search keywords naturally.
+- End exactly with: | {AUTHOR}
+- Do not add hashtags, quotes, explanations, or emojis.
+- Do not invent chapter numbers, scripture claims, or lesson details.
+- Keep the title concise and within YouTube's 100-character limit.
+
+Return only the final title.
+"""
+
+    response = client.models.generate_content(
+        model="gemini-3.8-flash",
+        contents=prompt
+    )
+
+    title = (response.text or "").strip().strip('"').strip("'")
+    title = " ".join(title.split())
+
+    if not title or AUTHOR not in title:
+        raise RuntimeError("AI did not return a valid title.")
+
+    if len(title) > 100:
+        title = title[:100 - len(AUTHOR) - 3].rstrip(" |:-") + " | " + AUTHOR
+
+    return title
+
+
 def choose_schedule(config, now):
     schedules = config["schedule"]
 
-    # GitHub's scheduled runs are in UTC; select the matching
-    # India-time slot. Manual runs use the nearest configured slot.
-    exact = [
-        item for item in schedules
-        if item["hour"] == now.hour
-        and item["minute"] == now.minute
-    ]
-
-    if exact:
-        return exact[0]
-
     if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
-        return min(
-            schedules,
-            key=lambda item: abs(
-                item["hour"] * 60 + item["minute"]
-                - (now.hour * 60 + now.minute)
-            )
+        selected = os.environ.get("PROGRAMME", "").strip()
+        if selected:
+            for item in schedules:
+                if item["key"] == selected:
+                    return item
+        raise RuntimeError(
+            "Manual run requires PROGRAMME to be selected. "
+            "Use shivpuran or bhagavad_gita."
         )
 
+    for item in schedules:
+        if (item["hour"], item["minute"]) == (now.hour, now.minute):
+            return item
+
     raise RuntimeError(
-        f"No schedule configured for India time {now:%H:%M}."
+        f"No configured slot matches India time {now:%H:%M}."
     )
 
 
 def tomorrow_start(slot, now):
-    start_date = now.date() + timedelta(days=1)
+    day = now.date() + timedelta(days=1)
     return datetime(
-        start_date.year,
-        start_date.month,
-        start_date.day,
-        slot["hour"],
-        slot["minute"],
-        tzinfo=TIMEZONE
+        day.year, day.month, day.day,
+        slot["hour"], slot["minute"], tzinfo=TIMEZONE
     )
 
 
 def find_existing_broadcast(youtube, title, start_time):
     request = youtube.liveBroadcasts().list(
-        part="snippet,status",
+        part="snippet",
         broadcastStatus="upcoming",
         maxResults=50
     )
 
     while request:
         response = request.execute()
-
         for item in response.get("items", []):
-            snippet = item["snippet"]
-            existing_title = snippet.get("title", "")
+            snippet = item.get("snippet", {})
             existing_start = snippet.get("scheduledStartTime")
-
-            if existing_title != title or not existing_start:
+            if not existing_start:
                 continue
 
             existing_dt = datetime.fromisoformat(
                 existing_start.replace("Z", "+00:00")
             ).astimezone(TIMEZONE)
 
-            if existing_dt.date() == start_time.date():
+            if (
+                snippet.get("title") == title
+                and existing_dt.date() == start_time.date()
+            ):
                 return item["id"]
 
-        request = youtube.liveBroadcasts().list_next(
-            request, response
-        )
+        request = youtube.liveBroadcasts().list_next(request, response)
 
     return None
 
 
 def create_broadcast(youtube, config, slot, start_time):
-    title = slot["title"]
-    description = slot["description"]
+    lesson_map = config.get("lessons", {})
+    programme_lessons = lesson_map.get(slot["key"], [])
 
-    existing_id = find_existing_broadcast(
-        youtube, title, start_time
-    )
-
-    if existing_id:
-        print(
-            f"Already scheduled for {start_time:%d-%m-%Y %I:%M %p}: "
-            f"https://www.youtube.com/watch?v={existing_id}"
+    if not programme_lessons:
+        raise RuntimeError(
+            f"No verified lesson list found for {slot['key']}. "
+            "Add the verified chapter/lesson list to config.json first."
         )
+
+    # Choose the next lesson using the scheduled date.
+    lesson = programme_lessons[
+        start_time.date().toordinal() % len(programme_lessons)
+    ]
+
+    title = get_ai_title(slot, lesson)
+
+    existing_id = find_existing_broadcast(youtube, title, start_time)
+    if existing_id:
+        print(f"Already scheduled: https://www.youtube.com/watch?v={existing_id}")
         return
+
+    description = slot.get("description", "")
 
     body = {
         "snippet": {
@@ -156,11 +191,10 @@ def create_broadcast(youtube, config, slot, start_time):
     ).execute()
 
     video_id = result["id"]
-
-    print("Scheduled YouTube broadcast successfully.")
+    print("Broadcast scheduled.")
+    print(f"Lesson: {lesson}")
     print(f"Title: {title}")
-    print(f"Scheduled: {start_time:%d-%m-%Y %I:%M %p} IST")
-    print(f"Privacy: {config.get('privacy_status', 'private')}")
+    print(f"Time: {start_time:%d-%m-%Y %I:%M %p} IST")
     print(f"Auto-start: OFF")
     print(f"URL: https://www.youtube.com/watch?v={video_id}")
 
@@ -168,7 +202,6 @@ def create_broadcast(youtube, config, slot, start_time):
 def main():
     config = load_config()
     now = datetime.now(TIMEZONE)
-
     print(f"India time: {now:%Y-%m-%d %H:%M:%S}")
 
     slot = choose_schedule(config, now)
