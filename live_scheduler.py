@@ -1,7 +1,10 @@
+
 import base64
 import json
 import os
+import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
@@ -15,8 +18,13 @@ from googleapiclient.discovery import build
 TIMEZONE = ZoneInfo("Asia/Kolkata")
 SCOPES = ["https://www.googleapis.com/auth/youtube.force-ssl"]
 AUTHOR = "Mahant Rajesh Kumar Tiwari"
+CHANNEL_NAME = "JYOTIRLING SHIVMATH BARAULI LUCKNOW"
+WEBSITE = "https://jyotirlingshivmath.in"
+CHANNEL_URL = "https://www.youtube.com/@MAHANTRAJESHKUMARTIWARIRANJAN"
 PROGRESS_FILE = "progress.json"
 GITHUB_API = "https://api.github.com"
+GEMINI_MODEL = "gemini-3.8-flash"
+MAX_GEMINI_ATTEMPTS = 3
 
 
 def load_config():
@@ -33,7 +41,7 @@ def github_request(url, method="GET", payload=None):
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "Jyotirling-Shivmath-Live-Scheduler"
+        "User-Agent": "Jyotirling-Shivmath-Live-Scheduler",
     }
 
     data = None
@@ -60,6 +68,7 @@ def github_request(url, method="GET", payload=None):
 
 def get_progress():
     repository = os.environ.get("GITHUB_REPOSITORY")
+
     if not repository:
         if os.path.exists(PROGRESS_FILE):
             with open(PROGRESS_FILE, "r", encoding="utf-8") as file:
@@ -91,7 +100,7 @@ def save_progress(progress, sha=None):
 
     payload = {
         "message": "Update sequential Shiv Puran lesson progress",
-        "content": base64.b64encode(content).decode("ascii")
+        "content": base64.b64encode(content).decode("ascii"),
     }
     if sha:
         payload["sha"] = sha
@@ -117,56 +126,182 @@ def get_youtube():
     return build(
         "youtube", "v3",
         credentials=credentials,
-        cache_discovery=False
+        cache_discovery=False,
     )
 
 
-def get_ai_title(slot, lesson):
+def clean_text(value):
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.strip().split())
+
+
+def fallback_metadata(slot, lesson, config):
+    """Used when Gemini remains unavailable."""
+    title = f"{lesson} | Shiv Puran | {AUTHOR}"
+    title = title[:100].rstrip()
+
+    base_description = clean_text(slot.get("description", ""))
+
+    description = f"""🔱 हर हर महादेव 🔱
+
+आज का पाठ: {lesson}
+
+इस प्रसारण में श्री शिव पुराण के पाठ से जुड़ें और भगवान शिव की भक्ति करें।
+
+कथा व्यास: {AUTHOR}
+धार्मिक मंच: {CHANNEL_NAME}
+
+YouTube चैनल: {CHANNEL_URL}
+वेबसाइट: {WEBSITE}
+
+{base_description}
+
+#ShivPuran #ShivKatha #JyotirlingShivmath #HarHarMahadev
+""".strip()
+
+    tags = [
+        "Shiv Puran",
+        "Shiv Purana",
+        "Shiv Puran Katha",
+        "Shiv Katha",
+        "Lord Shiva",
+        "Mahadev",
+        "Har Har Mahadev",
+        "Jyotirling Shivmath",
+        "Mahant Rajesh Kumar Tiwari",
+        "Hindu devotional",
+    ]
+
+    return {
+        "title": title,
+        "description": description[:4900],
+        "tags": tags,
+    }
+
+
+def generate_metadata(slot, lesson, config):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise RuntimeError("Missing GEMINI_API_KEY secret.")
+        print("GEMINI_API_KEY missing; using fallback metadata.")
+        return fallback_metadata(slot, lesson, config)
 
     client = genai.Client(api_key=api_key)
 
     prompt = f"""
-You write accurate, searchable YouTube titles for a Hindu
-devotional channel.
+You are an accurate Hindi YouTube SEO editor for a Hindu devotional channel.
 
+Channel: {CHANNEL_NAME}
+Speaker: {AUTHOR}
 Programme: {slot["key"]}
-Verified lesson from the user's list: {lesson}
+Verified lesson name from the user's ordered list: {lesson}
+Configured programme description: {slot.get("description", "")}
+Website: {WEBSITE}
+YouTube channel: {CHANNEL_URL}
 
-Write one concise searchable title in Hindi or English, whichever
-best fits the lesson. Start with the actual lesson topic.
-Do not invent chapter numbers or add unsupported claims.
-No hashtags, emojis, quotation marks or explanations.
-The title must end exactly with: | {AUTHOR}
-Maximum total length: 100 characters.
-Return only the title.
+Return ONLY one valid JSON object with these keys:
+"title": a searchable title, maximum 100 characters, ending with
+"| {AUTHOR}".
+"description": detailed, natural Hindi description of approximately
+150-300 words. Explain only what is supported by the verified lesson
+name and supplied programme details. Do not invent story events, verses,
+chapter numbers, scripture quotations, dates, timings or claims.
+Include the speaker, channel, website and a suitable invitation to watch
+and subscribe. Add 3-5 relevant hashtags at the end.
+"tags": an array of 8-15 relevant YouTube search tags. Each tag must be
+short and relevant. Do not put # before tags.
+
+Do not add markdown fences or any text outside the JSON object.
 """
 
-    response = client.models.generate_content(
-       model="gemini-3.8-flash",
-        contents=prompt
-    )
+    for attempt in range(1, MAX_GEMINI_ATTEMPTS + 1):
+        try:
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+                config={
+                    "response_mime_type": "application/json",
+                    "temperature": 0.3,
+                },
+            )
 
-    title = " ".join((response.text or "").strip().split())
-    title = title.strip("\"'“”‘’")
+            raw = (response.text or "").strip()
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
 
-    suffix = f" | {AUTHOR}"
-    if not title:
-        raise RuntimeError("Gemini returned an empty title.")
+            data = json.loads(raw)
+            title = clean_text(data.get("title", ""))
+            description = str(data.get("description", "")).strip()
+            tags = data.get("tags", [])
 
-    if title.endswith(suffix):
-        topic = title[:-len(suffix)].strip()
-    else:
-        topic = title.rsplit("|", 1)[0].strip() if "|" in title else title
+            if not title or not description:
+                raise ValueError("Gemini returned incomplete metadata.")
 
-    max_topic_length = 100 - len(suffix)
-    topic = topic[:max_topic_length].rstrip(" |:-")
-    if not topic:
-        raise RuntimeError("Gemini returned an invalid title topic.")
+            suffix = f" | {AUTHOR}"
+            if title.endswith(suffix):
+                topic = title[:-len(suffix)].strip()
+            else:
+                topic = title.rsplit("|", 1)[0].strip()
 
-    return topic + suffix
+            topic = topic[:100 - len(suffix)].rstrip(" |:-")
+            title = topic + suffix
+
+            if len(title) > 100:
+                title = title[:100].rstrip()
+
+            if not isinstance(tags, list):
+                tags = []
+
+            tags = [
+                clean_text(tag).lstrip("#")
+                for tag in tags
+                if isinstance(tag, str) and clean_text(tag)
+            ]
+
+            # YouTube allows up to 500 characters for all video tags.
+            final_tags = []
+            total_length = 0
+            for tag in tags:
+                if tag.lower() not in {t.lower() for t in final_tags}:
+                    extra = len(tag) + (1 if final_tags else 0)
+                    if total_length + extra <= 500:
+                        final_tags.append(tag)
+                        total_length += extra
+
+            if not final_tags:
+                final_tags = fallback_metadata(
+                    slot, lesson, config
+                )["tags"]
+
+            # Ensure the description always includes basic channel details.
+            footer = (
+                f"\n\nकथा व्यास: {AUTHOR}"
+                f"\n{CHANNEL_NAME}"
+                f"\nYouTube: {CHANNEL_URL}"
+                f"\nवेबसाइट: {WEBSITE}"
+            )
+            if CHANNEL_URL not in description:
+                description += footer
+
+            description = description[:4900].strip()
+
+            print(f"Gemini metadata generated on attempt {attempt}.")
+            return {
+                "title": title,
+                "description": description,
+                "tags": final_tags,
+            }
+
+        except Exception as error:
+            print(
+                f"Gemini metadata attempt {attempt}/"
+                f"{MAX_GEMINI_ATTEMPTS} failed: {error}"
+            )
+            if attempt < MAX_GEMINI_ATTEMPTS:
+                time.sleep(2 ** attempt)
+
+    print("Gemini unavailable; using fallback metadata.")
+    return fallback_metadata(slot, lesson, config)
 
 
 def choose_schedule(config, now):
@@ -208,7 +343,7 @@ def next_day_start(slot, now):
     return datetime(
         day.year, day.month, day.day,
         int(slot["hour"]), int(slot["minute"]),
-        tzinfo=TIMEZONE
+        tzinfo=TIMEZONE,
     )
 
 
@@ -227,7 +362,7 @@ def find_existing_broadcast(youtube, start_time):
     request = youtube.liveBroadcasts().list(
         part="snippet,status",
         broadcastStatus="upcoming",
-        maxResults=50
+        maxResults=50,
     )
 
     while request:
@@ -252,8 +387,7 @@ def find_existing_broadcast(youtube, start_time):
 
 
 def create_broadcast(youtube, config, slot, start_time):
-    lesson_map = config.get("lessons", {})
-    programme_lessons = lesson_map.get(slot["key"], [])
+    programme_lessons = config.get("lessons", {}).get(slot["key"], [])
 
     if not programme_lessons:
         raise RuntimeError(
@@ -276,56 +410,59 @@ def create_broadcast(youtube, config, slot, start_time):
         slot["key"], programme_lessons, progress
     )
 
-    title = get_ai_title(slot, lesson)
-    description = (
-        f"{slot.get('description', '')}\n\n"
-        f"आज का पाठ: {lesson}"
-    ).strip()
+    metadata = generate_metadata(slot, lesson, config)
+    title = metadata["title"]
+    description = metadata["description"]
+    tags = metadata["tags"]
 
     body = {
         "snippet": {
             "title": title,
             "description": description,
+            "tags": tags,
             "scheduledStartTime": start_time.isoformat(),
-            "categoryId": str(config.get("category_id", "22"))
+            "categoryId": str(config.get("category_id", "22")),
         },
         "status": {
             "privacyStatus": config.get("privacy_status", "private"),
-            "selfDeclaredMadeForKids": False
+            "selfDeclaredMadeForKids": False,
         },
         "contentDetails": {
             "enableAutoStart": False,
-            "enableAutoStop": False
-        }
+            "enableAutoStop": False,
+        },
     }
 
     result = youtube.liveBroadcasts().insert(
         part="snippet,status,contentDetails",
-        body=body
+        body=body,
     ).execute()
 
     video_id = result["id"]
     print("Broadcast scheduled successfully.")
     print(f"Lesson: {lesson}")
     print(f"Title: {title}")
+    print(f"Tags: {', '.join(tags)}")
+    print(f"Description length: {len(description)} characters")
     print(f"Time: {start_time:%d-%m-%Y %I:%M %p} IST")
     print("Privacy: " + config.get("privacy_status", "private"))
     print("Auto-start: OFF")
     print(f"URL: https://www.youtube.com/watch?v={video_id}")
 
-    progress[slot["key"]] = (lesson_index + 1) % len(programme_lessons)
+    # Save progress only after YouTube confirms broadcast creation.
+    progress[slot["key"]] = (
+        lesson_index + 1
+    ) % len(programme_lessons)
+
     save_progress(progress, progress_sha)
-    print(
-        f"Progress saved. Next lesson index: "
-        f"{progress[slot['key']]}"
-    )
+    print(f"Progress saved. Next lesson index: {progress[slot['key']]}")
 
 
 def main():
     config = load_config()
     now = datetime.now(TIMEZONE)
-    print(f"India time: {now:%Y-%m-%d %H:%M:%S}")
 
+    print(f"India time: {now:%Y-%m-%d %H:%M:%S}")
     slot = choose_schedule(config, now)
     start_time = next_day_start(slot, now)
 
