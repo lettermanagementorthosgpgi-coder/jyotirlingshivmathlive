@@ -1,0 +1,23 @@
+{
+  "timezone": "Asia/Kolkata",
+  "channel_name": "JYOTIRLING SHIVMATH BARAULI LUCKNOW",
+  "author_name": "Mahant Rajesh Kumar Tiwari Ranjan",
+  "privacy_status": "private",
+  "category_id": "22",
+  "schedule": [
+    {
+      "key": "shivpuran",
+      "hour": 7,
+      "minute": 0,
+      "title": "Shiv Puran Live Katha | Jyotirling Shivmath",
+      "description": "🔱 हर हर महादेव 🔱\n\nश्री ज्योतिर्लिंग शिवमठ, बरौली, लखनऊ से शिवपुराण कथा।\nकथा व्यास: महंत राजेश कुमार तिवारी रंजन।\n\nकृपया श्रद्धा से जुड़ें और चैनल को सब्सक्राइब करें।\n\n#ShivPuran #JyotirlingShivmath #HarHarMahadev"
+    },
+    {
+      "key": "bhagavad_gita",
+      "hour": 19,
+      "minute": 0,
+      "title": "Shrimad Bhagavad Gita Live | Jyotirling Shivmath",
+      "description": "🙏 जय श्रीकृष्ण 🙏\n\nश्रीमद्भगवद्गीता का पावन पाठ एवं आध्यात्मिक विवेचन।\nश्री ज्योतिर्लिंग शिवमठ, बरौली, लखनऊ।\nवक्ता: महंत राजेश कुमार तिवारी रंजन।\n\n#BhagavadGita #JyotirlingShivmath #ShriKrishna"
+    }
+  ]
+}
