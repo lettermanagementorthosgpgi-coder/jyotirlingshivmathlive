@@ -260,51 +260,57 @@ def get_progress():
 
 def save_progress(progress, sha=None):
 
-    raw = json.dumps(
-        progress,
-        ensure_ascii=False,
-        indent=2
-    )
-
-    with open(
-        PROGRESS_FILE,
-        "w",
-        encoding="utf-8"
-    ) as file:
-
+    raw = json.dumps(progress, ensure_ascii=False, indent=2)
+    with open(PROGRESS_FILE, "w", encoding="utf-8") as file:
         file.write(raw)
 
     repository = os.environ.get("GITHUB_REPOSITORY")
-
     if not repository or not os.environ.get("GITHUB_TOKEN"):
         log("Progress स्थानीय फाइल में सुरक्षित की गई।")
         return
 
-    payload = {
-        "message": "Update Jyotirling Shivmath live progress",
-        "content": base64.b64encode(
-            raw.encode("utf-8")
-        ).decode("utf-8")
-    }
+    current_sha = sha
+    for attempt in range(1, 4):
+        if attempt > 1 or not current_sha:
+            latest = github_request(f"contents/{PROGRESS_FILE}")
+            if latest and latest.get("content"):
+                latest_raw = base64.b64decode(latest["content"]).decode("utf-8")
+                latest_progress = json.loads(latest_raw)
+                merged = dict(latest_progress)
+                merged.update(progress)
+                merged_broadcasts = dict(latest_progress.get("broadcasts", {}))
+                for programme, records in progress.get("broadcasts", {}).items():
+                    combined = dict(merged_broadcasts.get(programme, {}))
+                    combined.update(records)
+                    merged_broadcasts[programme] = combined
+                if "broadcasts" in progress:
+                    merged["broadcasts"] = merged_broadcasts
+                progress.clear()
+                progress.update(merged)
+                raw = json.dumps(progress, ensure_ascii=False, indent=2)
+                current_sha = latest.get("sha")
 
-    if sha:
-        payload["sha"] = sha
+        payload = {
+            "message": "Update Jyotirling Shivmath live progress",
+            "content": base64.b64encode(raw.encode("utf-8")).decode("utf-8")
+        }
+        if current_sha:
+            payload["sha"] = current_sha
 
-    try:
-        github_request(
-            f"contents/{PROGRESS_FILE}",
-            method="PUT",
-            payload=payload
-        )
+        try:
+            github_request(f"contents/{PROGRESS_FILE}", method="PUT", payload=payload)
+            with open(PROGRESS_FILE, "w", encoding="utf-8") as file:
+                file.write(raw)
+            log("Progress GitHub पर सुरक्षित कर दी गई।")
+            return
+        except Exception as error:
+            if "409" not in str(error) or attempt == 3:
+                log(f"GitHub पर progress सुरक्षित नहीं हुई: {error}")
+                raise
+            log(f"Progress SHA बदल गई; नवीनतम फ़ाइल लेकर पुनः प्रयास ({attempt}/3)।")
+            current_sha = None
 
-        log("Progress GitHub पर सुरक्षित कर दी गई।")
 
-    except Exception as error:
-        log(
-            f"GitHub पर progress सुरक्षित नहीं हुई: {error}"
-        )
-        raise
-        # ============================================================
 # AUTOMATIC THUMBNAIL GENERATION
 # ============================================================
 
@@ -930,58 +936,39 @@ def update_existing_broadcast_time(
 # ============================================================
 
 def verify_and_fix_tags(youtube, video_id, desired_tags):
-    for attempt in range(1, 4):
+    for attempt in range(1, 9):
         try:
-            response = youtube.videos().list(
-                part="snippet",
-                id=video_id
-            ).execute()
-
+            response = youtube.videos().list(part="snippet", id=video_id).execute()
             items = response.get("items", [])
-
             if not items:
-                log("Video अभी videos.list में उपलब्ध नहीं है।")
-                time.sleep(3)
+                log(f"Video metadata अभी उपलब्ध नहीं है; पुनः प्रयास {attempt}/8।")
+                time.sleep(5)
                 continue
 
-            snippet = items[0]["snippet"]
+            snippet = dict(items[0]["snippet"])
             saved_tags = snippet.get("tags", [])
-
-            if saved_tags:
-                log(
-                    f"YouTube पर {len(saved_tags)} tags सुरक्षित हैं।"
-                )
+            if saved_tags and set(desired_tags).issubset(set(saved_tags)):
+                log(f"YouTube पर {len(saved_tags)} tags सुरक्षित और सत्यापित हैं।")
                 return True
-
-            log("YouTube पर tags नहीं मिले; दोबारा save कर रहे हैं।")
 
             snippet["tags"] = desired_tags
-
             youtube.videos().update(
                 part="snippet",
-                body={
-                    "id": video_id,
-                    "snippet": snippet
-                }
+                body={"id": video_id, "snippet": snippet}
             ).execute()
 
-            check = youtube.videos().list(
-                part="snippet",
-                id=video_id
-            ).execute()
-
+            time.sleep(2)
+            check = youtube.videos().list(part="snippet", id=video_id).execute()
             check_items = check.get("items", [])
-
-            if check_items and check_items[0]["snippet"].get("tags"):
-                log("Tags दोबारा जाँचने पर सुरक्षित मिले।")
+            if check_items and set(desired_tags).issubset(set(check_items[0]["snippet"].get("tags", []))):
+                log("Tags YouTube पर सुरक्षित और सत्यापित हो गए।")
                 return True
-
+            log(f"Tags अभी सत्यापित नहीं हुए; पुनः प्रयास {attempt}/8।")
         except Exception as error:
-            log(f"Tags verification attempt {attempt}: {error}")
+            log(f"Tags verification attempt {attempt}/8: {error}")
+        time.sleep(5)
 
-        time.sleep(3)
-
-    log("चेतावनी: Tags की पुष्टि नहीं हो सकी।")
+    log("चेतावनी: 8 प्रयासों के बाद भी YouTube Tags सत्यापित नहीं हो सके।")
     return False
 
 
