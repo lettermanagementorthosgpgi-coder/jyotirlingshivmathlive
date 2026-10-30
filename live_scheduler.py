@@ -1064,61 +1064,103 @@ def ensure_playlist_assignment(
 # ============================================================
 
 def generate_youtube_metadata(programme, lesson):
+    """Try metadata providers in order: Cloudflare AI, OpenAI GPT, Gemini."""
     source_title = str(lesson.get("title", "धार्मिक प्रवचन")).strip()
     programme_name = "शिव महापुराण" if programme == "shivpuran" else "श्रीमद्भगवद्गीता"
-    prompt = f"""
-आप हिंदी devotional YouTube चैनल के विशेषज्ञ SEO संपादक हैं।
+    suffix = "|Mahant Rajesh Kumar Tiwari"
+    prompt = f'''
+आप हिंदी devotional YouTube चैनल के SEO शोधकर्ता हैं।
 कार्यक्रम: {programme_name}
 मूल पाठ/प्रसंग: {source_title}
 प्रस्तुतकर्ता: {AUTHOR}
 चैनल: {CHANNEL_NAME}
 वेबसाइट: {WEBSITE}
-
-इस वास्तविक प्रसंग पर सटीक और आकर्षक YouTube Live metadata बनाएं।
-- title अधिकतम 100 characters; अंत में ठीक "|Mahant Rajesh Kumar Tiwari" हो।
-- title में मूल प्रसंग का मुख्य अर्थ और खोजे जाने वाले शब्द रहें।
-- description हिंदी में 2-4 अनुच्छेद: प्रसंग का परिचय, दर्शक क्या सुनेंगे, प्रस्तुति/चैनल/वेबसाइट और विनम्र subscribe अनुरोध।
-- शास्त्रीय घटनाएँ/तथ्य न गढ़ें; दिए गए शीर्षक से आगे अप्रमाणित विवरण न जोड़ें।
-- tags में 15-20 खोज-शब्द, बिना # के।
-- hashtags में 3-5 प्रासंगिक शब्द, # सहित।
+प्रसंग का अर्थ न बदलें और शास्त्रीय तथ्य न गढ़ें।
+title अधिकतम 100 अक्षर का हो और अंत में ठीक "|Mahant Rajesh Kumar Tiwari" हो।
+description हिंदी में 2-4 अनुच्छेद हों।
+15-20 tags बिना # के और 3-5 hashtags # सहित दें।
 केवल JSON लौटाएं: {{"title":"...","description":"...","tags":["..."],"hashtags":["#..."]}}
-"""
-    key = os.environ.get("GEMINI_API_KEY")
-    model = os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
-    if key:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.5, "responseMimeType": "application/json", "maxOutputTokens": 1800}
-        }
-        request = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+'''
+    def normalise(data, provider):
+        title = str(data.get("title", "")).strip()
+        title = re.sub(r"\s*\|\s*Mahant Rajesh Kumar Tiwari\s*$", "", title, flags=re.I).strip()
+        title = title[:100-len(suffix)-1].rstrip() + " " + suffix
+        description = str(data.get("description", "")).strip()
+        tags = [str(x).strip().lstrip("#") for x in data.get("tags", []) if str(x).strip()]
+        hashtags = [str(x).strip() if str(x).strip().startswith("#") else "#" + str(x).strip().replace(" ", "") for x in data.get("hashtags", []) if str(x).strip()]
+        if not description or not tags:
+            raise ValueError("AI description या tags खाली हैं")
+        clean_tags = []
+        total = 0
+        for tag in tags:
+            if tag.lower() in [x.lower() for x in clean_tags]:
+                continue
+            size = len(tag) + (1 if clean_tags else 0)
+            if total + size <= 500:
+                clean_tags.append(tag)
+                total += size
+            if len(clean_tags) >= 20:
+                break
+        if not clean_tags:
+            raise ValueError("AI tags खाली हैं")
+        description += "\n\n" + " ".join(list(dict.fromkeys(hashtags))[:5])
+        description += f"\n\nप्रस्तुति: {AUTHOR}\n{CHANNEL_NAME}\n{WEBSITE}\n{CHANNEL_URL}"
+        log(f"{provider}: metadata तैयार।")
+        return title, description, clean_tags
+    # 1) Cloudflare Workers AI
+    cf_token = os.environ.get("CLOUDFLARE_API_TOKEN")
+    cf_account = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
+    if cf_token and cf_account:
         try:
-            with urllib.request.urlopen(request, timeout=90) as response:
+            model = os.environ.get("CLOUDFLARE_TEXT_MODEL", "@cf/openai/gpt-oss-120b")
+            endpoint = f"https://api.cloudflare.com/client/v4/accounts/{cf_account}/ai/run/{model}"
+            payload = {"messages": [{"role":"system","content":"Return only valid JSON in natural Hindi."},{"role":"user","content":prompt}], "max_tokens":1800, "temperature":0.4}
+            request = urllib.request.Request(endpoint, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers={"Authorization":f"Bearer {cf_token}","Content-Type":"application/json"}, method="POST")
+            with urllib.request.urlopen(request, timeout=120) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            raw = result.get("result", {}).get("response", "")
+            if not raw:
+                raise ValueError("Cloudflare AI response खाली है")
+            raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.I)
+            return normalise(json.loads(raw), "Cloudflare Workers AI " + model)
+        except Exception as error:
+            log(f"Cloudflare AI असफल; अब GPT fallback: {error}")
+    else:
+        log("Cloudflare credentials नहीं मिले; GPT fallback चलेगा।")
+    # 2) OpenAI GPT
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if openai_key:
+        try:
+            model = os.environ.get("OPENAI_TEXT_MODEL", OPENAI_MODEL)
+            payload = {"model":model,"messages":[{"role":"system","content":"Return only valid JSON. You are an accurate Hindi YouTube SEO editor."},{"role":"user","content":prompt}],"response_format":{"type":"json_object"},"temperature":0.4,"max_tokens":1800}
+            request = urllib.request.Request("https://api.openai.com/v1/chat/completions", data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers={"Authorization":f"Bearer {openai_key}","Content-Type":"application/json"}, method="POST")
+            with urllib.request.urlopen(request, timeout=120) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            raw = result["choices"][0]["message"]["content"]
+            return normalise(json.loads(raw), "OpenAI GPT " + model)
+        except Exception as error:
+            log(f"GPT असफल; अब Gemini fallback: {error}")
+    else:
+        log("OPENAI_API_KEY नहीं मिला; Gemini fallback चलेगा।")
+    # 3) Google Gemini
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    if gemini_key:
+        try:
+            model = os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
+            endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
+            payload = {"contents":[{"parts":[{"text":prompt}]}],"generationConfig":{"temperature":0.4,"responseMimeType":"application/json","maxOutputTokens":1800}}
+            request = urllib.request.Request(endpoint, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers={"Content-Type":"application/json"}, method="POST")
+            with urllib.request.urlopen(request, timeout=120) as response:
                 result = json.loads(response.read().decode("utf-8"))
             raw = result["candidates"][0]["content"]["parts"][0]["text"]
-            data = json.loads(raw)
-            suffix = "|Mahant Rajesh Kumar Tiwari"
-            title = str(data.get("title", "")).strip()
-            title = re.sub(r"\\s*\\|\\s*Mahant Rajesh Kumar Tiwari\\s*$", "", title, flags=re.I).strip()
-            title = title[:99-len(suffix)].rstrip() + " " + suffix
-            description = str(data.get("description", "")).strip()
-            tags = [str(x).strip().lstrip("#") for x in data.get("tags", []) if str(x).strip()]
-            hashtags = [str(x).strip() if str(x).strip().startswith("#") else "#" + str(x).strip().replace(" ", "") for x in data.get("hashtags", []) if str(x).strip()]
-            if not description or not tags:
-                raise ValueError("AI description या tags खाली हैं")
-            description += "\\n\\n" + " ".join(hashtags[:5])
-            description += f"\\n\\nप्रस्तुति: {AUTHOR}\\n{CHANNEL_NAME}\\n{WEBSITE}\\n{CHANNEL_URL}"
-            log(f"Gemini {model}: SEO title, description, tags और hashtags तैयार।")
-            return title, description, list(dict.fromkeys(tags))[:20]
+            return normalise(json.loads(raw), "Gemini " + model)
         except Exception as error:
-            log(f"Gemini SEO generation विफल; fallback metadata: {error}")
-
-    suffix = "|Mahant Rajesh Kumar Tiwari"
-    title = source_title[:99-len(suffix)].rstrip() + " " + suffix
-    description = f"{source_title}\\n\\n{programme_name} के इस प्रसंग का आध्यात्मिक विवेचन सुनें।\\n\\nप्रस्तुति: {AUTHOR}\\n{CHANNEL_NAME}\\n{WEBSITE}\\n{CHANNEL_URL}\\n#SanatanDharma #Bhakti"
+            log(f"Gemini भी असफल; fallback metadata: {error}")
+    title = source_title[:100-len(suffix)-1].rstrip() + " " + suffix
+    description = f"{source_title}\n\n{programme_name} के इस प्रसंग का आध्यात्मिक विवेचन सुनें।\n\nप्रस्तुति: {AUTHOR}\n{CHANNEL_NAME}\n{WEBSITE}\n{CHANNEL_URL}\n\n#SanatanDharma #Bhakti"
     tags = ["Jyotirling Shivmath", "Mahant Rajesh Kumar Tiwari", "Sanatan Dharma", "Hindi Pravachan", "Bhakti", "Shiv Maha Puran" if programme == "shivpuran" else "Bhagavad Gita", "Hindu Dharma", "Spiritual Discourse"]
+    log("तीनों AI उपलब्ध नहीं; सुरक्षित fallback metadata उपयोग हुआ।")
     return title, description, tags
-
 
 # ============================================================
 # CREATE NEW BROADCAST
