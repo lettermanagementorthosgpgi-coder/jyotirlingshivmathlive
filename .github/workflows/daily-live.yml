@@ -2,10 +2,46 @@
 name: Jyotirling Shivmath Live Scheduler
 
 on:
-  workflow_dispatch:
   schedule:
-    # Daily at 6:00 AM India time (00:30 UTC)
-    - cron: "30 0 * * *"
+    # Shiv Puran: 07:00 AM IST
+    - cron: "30 1 * * *"
+
+    # Bhagavad Gita: 07:00 PM IST
+    - cron: "30 13 * * *"
+
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Choose action"
+        required: true
+        type: choice
+        options:
+          - create
+          - update_time
+        default: create
+
+      programme:
+        description: "Choose programme"
+        required: false
+        type: choice
+        options:
+          - shivpuran
+          - bhagavadgita
+
+      broadcast_date:
+        description: "Broadcast date (YYYY-MM-DD)"
+        required: false
+        type: string
+
+      actual_time:
+        description: "New broadcast time (HH:MM, IST)"
+        required: false
+        type: string
+
+      broadcast_id:
+        description: "Existing YouTube Broadcast ID (if required)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -17,7 +53,6 @@ concurrency:
 jobs:
   schedule-live:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -26,20 +61,31 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-          cache: pip
+          python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Check required project files
         run: |
-          test -f config.json
-          test -f live_scheduler.py
+          python -m pip install --upgrade pip
+          pip install google-api-python-client
+          pip install google-auth
+          pip install google-auth-oauthlib
+          pip install requests
+          pip install google-genai
 
-      - name: Run live scheduler
+      - name: Run Live Scheduler
         env:
-          YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python live_scheduler.py
+
+          ACTION: ${{ inputs.action || 'create' }}
+          PROGRAMME: ${{ inputs.programme }}
+          BROADCAST_DATE: ${{ inputs.broadcast_date }}
+          ACTUAL_TIME: ${{ inputs.actual_time }}
+          BROADCAST_ID: ${{ inputs.broadcast_id }}
+
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+        run: |
+          python live_scheduler.py
