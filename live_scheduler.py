@@ -579,7 +579,8 @@ def create_thumbnail(
     )
 
     # अध्याय शीर्षक
-    plaque = (430, 495, 1218, 585)
+    # Cover the full original title plaque, including old master text.
+    plaque = (410, 480, 1248, 620)
 
     draw.rounded_rectangle(
         plaque,
@@ -593,7 +594,7 @@ def create_thumbnail(
         draw,
         title,
         font_path,
-        max_width=748,
+        max_width=800,
         start_size=61,
         min_size=31
     )
@@ -629,17 +630,17 @@ def create_thumbnail(
 
     # शिव पुराण के लिए footer बदलना
     if programme == "shivpuran":
-        # Footer's central text area only; retain the surrounding gold frame.
-        draw.rectangle((590, 655, 1110, 699), fill=(20, 13, 12))
+        # Replace the Gita footer text while keeping the outer thumbnail frame.
+        draw.rectangle((500, 625, 1160, 681), fill=(20, 13, 12))
         footer = "SHIV MAHA PURAN"
         footer_font = ImageFont.truetype(
-            font_path, 32, layout_engine=ImageFont.Layout.RAQM
+            font_path, 34, layout_engine=ImageFont.Layout.RAQM
         )
         footer_box = draw.textbbox((0, 0), footer, font=footer_font)
         footer_width = footer_box[2] - footer_box[0]
         footer_x = (1280 - footer_width) // 2
         draw.text(
-            (footer_x, 660), footer, font=footer_font,
+            (footer_x, 634), footer, font=footer_font,
             fill=(255, 218, 65), stroke_width=1,
             stroke_fill=(65, 30, 0)
         )
