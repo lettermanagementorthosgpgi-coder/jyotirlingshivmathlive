@@ -1061,7 +1061,7 @@ HASHTAGS: 4-6 प्रासंगिक hashtags दें।
     gemini_key = os.environ.get("GEMINI_API_KEY")
     if gemini_key:
         try:
-            model = os.environ.get("GEMINI_TEXT_MODEL", "gemini-3.8-flash")
+            model = os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
             endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
             payload = {"contents":[{"parts":[{"text":prompt}]}],"generationConfig":{"temperature":0.5,"responseMimeType":"application/json","maxOutputTokens":2400}}
             request = urllib.request.Request(endpoint,data=json.dumps(payload,ensure_ascii=False).encode("utf-8"),headers={"Content-Type":"application/json"},method="POST")
