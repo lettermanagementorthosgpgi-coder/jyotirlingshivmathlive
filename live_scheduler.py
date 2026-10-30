@@ -743,9 +743,12 @@ def create_thumbnail(
         # Replace the Gita footer text while keeping the outer thumbnail frame.
         draw.rectangle((500, 625, 1160, 681), fill=(20, 13, 12))
         footer = "SHIV MAHA PURAN"
-        footer_font = ImageFont.truetype(
-            font_path, 34, layout_engine=ImageFont.Layout.RAQM
-        )
+        # Latin font is required for English footer; Devanagari font renders squares.
+        latin_candidates = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"]
+        latin_path = next((p for p in latin_candidates if os.path.isfile(p)), None)
+        if not latin_path:
+            raise FileNotFoundError("English footer font नहीं मिला।")
+        footer_font = ImageFont.truetype(latin_path, 34)
         footer_box = draw.textbbox((0, 0), footer, font=footer_font)
         footer_width = footer_box[2] - footer_box[0]
         footer_x = (1280 - footer_width) // 2
@@ -1055,6 +1058,68 @@ def ensure_playlist_assignment(
         return False
 
 
+
+# ============================================================
+# GEMINI SEO METADATA GENERATION
+# ============================================================
+
+def generate_youtube_metadata(programme, lesson):
+    source_title = str(lesson.get("title", "धार्मिक प्रवचन")).strip()
+    programme_name = "शिव महापुराण" if programme == "shivpuran" else "श्रीमद्भगवद्गीता"
+    prompt = f"""
+आप हिंदी devotional YouTube चैनल के विशेषज्ञ SEO संपादक हैं।
+कार्यक्रम: {programme_name}
+मूल पाठ/प्रसंग: {source_title}
+प्रस्तुतकर्ता: {AUTHOR}
+चैनल: {CHANNEL_NAME}
+वेबसाइट: {WEBSITE}
+
+इस वास्तविक प्रसंग पर सटीक और आकर्षक YouTube Live metadata बनाएं।
+- title अधिकतम 100 characters; अंत में ठीक "|Mahant Rajesh Kumar Tiwari" हो।
+- title में मूल प्रसंग का मुख्य अर्थ और खोजे जाने वाले शब्द रहें।
+- description हिंदी में 2-4 अनुच्छेद: प्रसंग का परिचय, दर्शक क्या सुनेंगे, प्रस्तुति/चैनल/वेबसाइट और विनम्र subscribe अनुरोध।
+- शास्त्रीय घटनाएँ/तथ्य न गढ़ें; दिए गए शीर्षक से आगे अप्रमाणित विवरण न जोड़ें।
+- tags में 15-20 खोज-शब्द, बिना # के।
+- hashtags में 3-5 प्रासंगिक शब्द, # सहित।
+केवल JSON लौटाएं: {{"title":"...","description":"...","tags":["..."],"hashtags":["#..."]}}
+"""
+    key = os.environ.get("GEMINI_API_KEY")
+    model = os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
+    if key:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.5, "responseMimeType": "application/json", "maxOutputTokens": 1800}
+        }
+        request = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=90) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            raw = result["candidates"][0]["content"]["parts"][0]["text"]
+            data = json.loads(raw)
+            suffix = "|Mahant Rajesh Kumar Tiwari"
+            title = str(data.get("title", "")).strip()
+            title = re.sub(r"\\s*\\|\\s*Mahant Rajesh Kumar Tiwari\\s*$", "", title, flags=re.I).strip()
+            title = title[:99-len(suffix)].rstrip() + " " + suffix
+            description = str(data.get("description", "")).strip()
+            tags = [str(x).strip().lstrip("#") for x in data.get("tags", []) if str(x).strip()]
+            hashtags = [str(x).strip() if str(x).strip().startswith("#") else "#" + str(x).strip().replace(" ", "") for x in data.get("hashtags", []) if str(x).strip()]
+            if not description or not tags:
+                raise ValueError("AI description या tags खाली हैं")
+            description += "\\n\\n" + " ".join(hashtags[:5])
+            description += f"\\n\\nप्रस्तुति: {AUTHOR}\\n{CHANNEL_NAME}\\n{WEBSITE}\\n{CHANNEL_URL}"
+            log(f"Gemini {model}: SEO title, description, tags और hashtags तैयार।")
+            return title, description, list(dict.fromkeys(tags))[:20]
+        except Exception as error:
+            log(f"Gemini SEO generation विफल; fallback metadata: {error}")
+
+    suffix = "|Mahant Rajesh Kumar Tiwari"
+    title = source_title[:99-len(suffix)].rstrip() + " " + suffix
+    description = f"{source_title}\\n\\n{programme_name} के इस प्रसंग का आध्यात्मिक विवेचन सुनें।\\n\\nप्रस्तुति: {AUTHOR}\\n{CHANNEL_NAME}\\n{WEBSITE}\\n{CHANNEL_URL}\\n#SanatanDharma #Bhakti"
+    tags = ["Jyotirling Shivmath", "Mahant Rajesh Kumar Tiwari", "Sanatan Dharma", "Hindi Pravachan", "Bhakti", "Shiv Maha Puran" if programme == "shivpuran" else "Bhagavad Gita", "Hindu Dharma", "Spiritual Discourse"]
+    return title, description, tags
+
+
 # ============================================================
 # CREATE NEW BROADCAST
 # ============================================================
@@ -1127,37 +1192,8 @@ def create_broadcast(
     # नया YouTube Broadcast तैयार करें
     # --------------------------------------------------------
 
-    title = lesson.get("youtube_title") or lesson["title"]
-
-    description = lesson.get(
-        "description",
-        f"""
-{lesson['title']}
-
-प्रस्तुति:
-{AUTHOR}
-{CHANNEL_NAME}
-
-Website: {WEBSITE}
-YouTube: {CHANNEL_URL}
-
-हर हर महादेव।
-जय श्री कृष्ण।
-"""
-    )
-
-    tags = lesson.get(
-        "tags",
-        [
-            "Jyotirling Shivmath",
-            "Mahant Rajesh Kumar Tiwari Ranjan",
-            "Sanatan Dharma",
-            "Bhagavad Gita",
-            "Shiv Maha Puran",
-            "Hindu Dharma",
-            "Devotional"
-        ]
-    )
+    # हर lesson के लिए Gemini से SEO title, description और tags बनाएं।
+    title, description, tags = generate_youtube_metadata(programme, lesson)
 
     privacy_status = slot.get(
         "privacyStatus",
