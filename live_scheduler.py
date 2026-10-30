@@ -55,7 +55,7 @@ IMAGE_MODEL = os.environ.get(
     "gemini-3.1-flash-image"
 )
 
-MASTER_THUMBNAIL = "karmsanyasyog.png"
+MASTER_THUMBNAIL = "karmsanyasyog.jpeg"
 THUMBNAIL_OUTPUT = "generated_thumbnail.jpg"
 
 MAX_AI_ATTEMPTS = 2
@@ -551,14 +551,14 @@ def create_thumbnail(
 
             generated = Image.open(background_path).convert("RGB")
 
-            generated = generated.resize(
-                (875, 407),
-                Image.Resampling.LANCZOS
+            # Keep the portrait/header and the complete lower title/author
+            # plaques untouched. Replace only the central/right story artwork.
+            generated = ImageOps.fit(
+                generated,
+                (860, 410),
+                method=Image.Resampling.LANCZOS
             )
-
-            # केवल केंद्रीय/right story-art area बदलने का प्रयास।
-            # Portrait और header का हिस्सा नहीं बदला जाता।
-            base.paste(generated, (405, 73))
+            base.paste(generated, (420, 78))
 
             log("शिव पुराण का AI दृश्य thumbnail में लगाया गया।")
 
@@ -629,35 +629,18 @@ def create_thumbnail(
 
     # शिव पुराण के लिए footer बदलना
     if programme == "shivpuran":
-        draw.rectangle(
-            (555, 614, 1110, 682),
-            fill=(2, 14, 35)
-        )
-
+        # Footer's central text area only; retain the surrounding gold frame.
+        draw.rectangle((590, 655, 1110, 699), fill=(20, 13, 12))
         footer = "SHIV MAHA PURAN"
-
         footer_font = ImageFont.truetype(
-            font_path,
-            42,
-            layout_engine=ImageFont.Layout.RAQM
+            font_path, 32, layout_engine=ImageFont.Layout.RAQM
         )
-
-        footer_box = draw.textbbox(
-            (0, 0),
-            footer,
-            font=footer_font
-        )
-
+        footer_box = draw.textbbox((0, 0), footer, font=footer_font)
         footer_width = footer_box[2] - footer_box[0]
-
         footer_x = (1280 - footer_width) // 2
-
         draw.text(
-            (footer_x, 624),
-            footer,
-            font=footer_font,
-            fill=(255, 218, 65),
-            stroke_width=1,
+            (footer_x, 660), footer, font=footer_font,
+            fill=(255, 218, 65), stroke_width=1,
             stroke_fill=(65, 30, 0)
         )
 
@@ -1233,25 +1216,21 @@ def get_youtube_service():
 # ============================================================
 
 def get_scheduled_time(slot):
+    """Use the hour/minute fields already stored in config.json."""
     now = datetime.now(TIMEZONE)
-
-    schedule_time = slot.get("time", "07:00")
-
-    hour, minute = map(
-        int,
-        schedule_time.split(":")
-    )
+    try:
+        hour = int(slot["hour"])
+        minute = int(slot["minute"])
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError("hour/minute out of range")
+    except (KeyError, TypeError, ValueError) as error:
+        fail(f"Schedule में hour/minute गलत हैं: {error}")
 
     scheduled = now.replace(
-        hour=hour,
-        minute=minute,
-        second=0,
-        microsecond=0
+        hour=hour, minute=minute, second=0, microsecond=0
     )
-
     if scheduled <= now:
         scheduled += timedelta(days=1)
-
     return scheduled
 
 
@@ -1288,18 +1267,15 @@ def main():
             ""
         ).strip()
 
-        new_time_text = os.environ.get(
-            "NEW_TIME",
-            ""
-        ).strip()
+        date_text = os.environ.get("BROADCAST_DATE", "").strip()
+        actual_time = os.environ.get("ACTUAL_TIME", "").strip()
 
         if not broadcast_id:
             fail("BROADCAST_ID उपलब्ध नहीं है।")
+        if not date_text or not actual_time:
+            fail("BROADCAST_DATE और ACTUAL_TIME दोनों आवश्यक हैं।")
 
-        if not new_time_text:
-            fail("NEW_TIME उपलब्ध नहीं है।")
-
-        new_time = parse_date_time(new_time_text)
+        new_time = parse_date_time(date_text, actual_time)
 
         update_existing_broadcast_time(
             youtube,
