@@ -343,17 +343,9 @@ def find_master_thumbnail(config):
 
 def make_shiv_background(lesson):
     """
-    शिव पुराण के वर्तमान प्रसंग के अनुसार Gemini से
-    नया 16:9 background image बनवाता है।
+    पहले Gemini और उसके असफल होने पर OpenAI Images API से
+    शिव पुराण प्रसंग का background बनाता है।
     """
-    api_key = os.environ.get("GEMINI_API_KEY")
-
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY उपलब्ध नहीं है।")
-
-    if genai is None:
-        raise RuntimeError("google-genai package उपलब्ध नहीं है।")
-
     prompt = f"""
 Create a high-quality devotional Indian mythological painting
 for a YouTube thumbnail background in widescreen 16:9 format.
@@ -393,32 +385,107 @@ NO modern objects.
 Generate background artwork only.
 """
 
-    client = genai.Client(api_key=api_key)
+    # प्रथम प्रयास: Gemini Image API
+    gemini_error = None
+    api_key = os.environ.get("GEMINI_API_KEY")
 
-    response = client.models.generate_content(
-        model=IMAGE_MODEL,
-        contents=[prompt],
-        config={
-            "response_modalities": ["TEXT", "IMAGE"],
-            "image_config": {
-                "aspect_ratio": "16:9",
-                "image_size": "2K"
-            }
-        }
+    if api_key and genai is not None:
+        try:
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model=IMAGE_MODEL,
+                contents=[prompt],
+                config={
+                    "response_modalities": ["TEXT", "IMAGE"],
+                    "image_config": {
+                        "aspect_ratio": "16:9",
+                        "image_size": "2K"
+                    }
+                }
+            )
+
+            for part in response.parts:
+                if getattr(part, "inline_data", None) is not None:
+                    generated = part.as_image()
+                    output = "shivpuran_ai_background.png"
+                    generated.save(output)
+
+                    if os.path.isfile(output) and os.path.getsize(output) > 20000:
+                        log("Gemini से शिव पुराण का AI background तैयार हो गया।")
+                        return output
+
+            gemini_error = "Gemini से image output प्राप्त नहीं हुआ।"
+
+        except Exception as error:
+            gemini_error = str(error)
+            log(f"Gemini image generation असफल; अब OpenAI आजमाया जाएगा: {error}")
+    else:
+        gemini_error = (
+            "GEMINI_API_KEY उपलब्ध नहीं है।"
+            if not api_key else
+            "google-genai package उपलब्ध नहीं है।"
+        )
+        log(f"Gemini उपलब्ध नहीं; अब OpenAI आजमाया जाएगा: {gemini_error}")
+
+    # दूसरा प्रयास: OpenAI Images API (अलग image-generation model)
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if not openai_key:
+        raise RuntimeError(
+            f"Gemini असफल ({gemini_error}); OPENAI_API_KEY उपलब्ध नहीं है।"
+        )
+
+    openai_model = os.environ.get(
+        "OPENAI_IMAGE_MODEL",
+        "gpt-image-2.5-sunburst"
     )
 
-    for part in response.parts:
-        if getattr(part, "inline_data", None) is not None:
-            generated = part.as_image()
-            output = "shivpuran_ai_background.png"
-            generated.save(output)
+    payload = {
+        "model": openai_model,
+        "prompt": prompt,
+        "size": "1536x1024",
+        "quality": "medium",
+        "output_format": "png"
+    }
 
-            if os.path.isfile(output) and os.path.getsize(output) > 20000:
-                log("शिव पुराण का AI background तैयार हो गया।")
-                return output
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/images/generations",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {openai_key}",
+            "Content-Type": "application/json"
+        },
+        method="POST"
+    )
 
-    raise RuntimeError("Gemini से image output प्राप्त नहीं हुआ।")
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            result = json.loads(response.read().decode("utf-8"))
 
+        image_data = result.get("data", [{}])[0].get("b64_json")
+        if not image_data:
+            raise RuntimeError("OpenAI API ने image data नहीं लौटाया।")
+
+        output = "shivpuran_ai_background.png"
+        with open(output, "wb") as image_file:
+            image_file.write(base64.b64decode(image_data))
+
+        if not os.path.isfile(output) or os.path.getsize(output) <= 20000:
+            raise RuntimeError("OpenAI से प्राप्त image file अधूरी है।")
+
+        log(f"OpenAI ({openai_model}) से शिव पुराण का AI background तैयार हो गया।")
+        return output
+
+    except urllib.error.HTTPError as error:
+        body = error.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Gemini असफल ({gemini_error}); OpenAI API error "
+            f"{error.code}: {body}"
+        )
+    except Exception as error:
+        raise RuntimeError(
+            f"Gemini असफल ({gemini_error}); OpenAI image generation "
+            f"भी असफल: {error}"
+        )
 
 def find_devanagari_font():
     """
