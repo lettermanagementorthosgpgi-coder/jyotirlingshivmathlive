@@ -391,6 +391,43 @@ NO modern objects.
 Generate background artwork only.
 """
 
+    # प्रथम प्रयास: Cloudflare Workers AI (FLUX.1 Schnell)
+    cloudflare_token = os.environ.get("CLOUDFLARE_API_TOKEN")
+    cloudflare_account = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
+    if cloudflare_token and cloudflare_account:
+        model = "@cf/black-forest-labs/flux-1-schnell"
+        endpoint = (
+            "https://api.cloudflare.com/client/v4/accounts/"
+            + cloudflare_account + "/ai/run/" + model
+        )
+        payload = {"prompt": prompt, "steps": 8}
+        request = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {cloudflare_token}",
+                "Content-Type": "application/json"
+            },
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            image_data = result.get("result", {}).get("image")
+            if not image_data:
+                raise RuntimeError("Cloudflare response में image data नहीं मिला।")
+            output = "shivpuran_ai_background.jpg"
+            with open(output, "wb") as image_file:
+                image_file.write(base64.b64decode(image_data))
+            if os.path.getsize(output) <= 20000:
+                raise RuntimeError("Cloudflare image file अधूरी है।")
+            log("Cloudflare Workers AI FLUX.1 Schnell से background तैयार हो गया।")
+            return output
+        except Exception as error:
+            log(f"Cloudflare image generation असफल; अब Gemini/OpenAI fallback: {error}")
+    else:
+        log("Cloudflare credentials उपलब्ध नहीं; Gemini/OpenAI fallback आजमाया जाएगा।")
+
     # प्रथम प्रयास: Gemini Image API
     gemini_error = None
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -1300,8 +1337,6 @@ def main():
 
     progress, progress_sha = get_progress()
 
-    youtube = get_youtube_service()
-
     action = os.environ.get(
         "ACTION",
         "create"
@@ -1311,6 +1346,22 @@ def main():
         "PROGRAMME",
         ""
     ).strip().lower()
+
+    # सुरक्षित इमेज टेस्ट: YouTube API, Broadcast और progress में कोई बदलाव नहीं।
+    if action == "test_image":
+        if programme not in ("shivpuran", "bhagavadgita"):
+            fail("test_image के लिए PROGRAMME shivpuran या bhagavadgita चुनें।")
+        slot = get_slot(config, programme)
+        lesson_index, lesson = get_next_lesson(programme, config, progress)
+        master_path = find_master_thumbnail(config)
+        output_path = create_thumbnail(
+            master_path, programme, lesson, lesson_index, config
+        )
+        log(f"सुरक्षित thumbnail test पूरा: {output_path}")
+        log("कोई YouTube Broadcast नहीं बनाया गया और progress नहीं बदली गई।")
+        return
+
+    youtube = get_youtube_service()
 
     # --------------------------------------------------------
     # पुराना Broadcast का समय बदलना
