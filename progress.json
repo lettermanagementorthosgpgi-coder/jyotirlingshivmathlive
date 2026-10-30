@@ -1,5 +1,14 @@
-
 {
-  "shivpuran": 194,
-  "bhagavadgita": 11
+  "shivpuran": 195,
+  "bhagavadgita": 11,
+  "broadcasts": {
+    "shivpuran": {
+      "2026-10-31": {
+        "id": "eD9XhL6_YFY",
+        "lesson": "श्रीरुद्र संहिता-पंचम खंड - वृंदा का पतिव्रत भंग",
+        "scheduled_time": "2026-10-31T07:00:00+05:30"
+      }
+    }
+  },
+  "shivpuran_next_title": "श्रीरुद्र संहिता-पंचम खंड - जलंधर का वध"
 }
