@@ -959,32 +959,54 @@ def ensure_playlist_assignment(
 # ============================================================
 
 def generate_youtube_metadata(programme, lesson):
-    """Try metadata providers in order: Cloudflare AI, OpenAI GPT, Gemini."""
+    """Generate high-quality metadata; never silently publish generic fallback."""
     source_title = str(lesson.get("title", "धार्मिक प्रवचन")).strip()
     programme_name = "शिव महापुराण" if programme == "shivpuran" else "श्रीमद्भगवद्गीता"
     suffix = "|Mahant Rajesh Kumar Tiwari"
     prompt = f'''
-आप हिंदी devotional YouTube चैनल के SEO शोधकर्ता हैं।
+आप एक वरिष्ठ हिंदी धार्मिक शोधकर्ता, YouTube SEO विशेषज्ञ और devotional content writer हैं।
 कार्यक्रम: {programme_name}
-मूल पाठ/प्रसंग: {source_title}
-प्रस्तुतकर्ता: {AUTHOR}
+आज का वास्तविक पाठ/प्रसंग: {source_title}
 चैनल: {CHANNEL_NAME}
+प्रस्तुतकर्ता: {AUTHOR}
 वेबसाइट: {WEBSITE}
-प्रसंग का अर्थ न बदलें और शास्त्रीय तथ्य न गढ़ें।
-title अधिकतम 100 अक्षर का हो और अंत में ठीक "|Mahant Rajesh Kumar Tiwari" हो।
-description हिंदी में 2-4 अनुच्छेद हों।
-15-20 tags बिना # के और 3-5 hashtags # सहित दें।
-केवल JSON लौटाएं: {{"title":"...","description":"...","tags":["..."],"hashtags":["#..."]}}
+
+इस खास प्रसंग पर आकर्षक, स्पष्ट और खोज में उपयोगी metadata लिखें। सामान्य/खाली वाक्य जैसे 'इस प्रसंग का आध्यात्मिक विवेचन सुनें' न लिखें।
+TITLE: प्रसंग के वास्तविक विषय को सीधे बताएँ। मुख्य खोज-शब्द शुरुआत में रखें। शीर्षक जिज्ञासा जगाए पर भ्रामक/सनसनीखेज न हो। 100 अक्षरों के भीतर रखें। अंत में ठीक यह suffix अनिवार्य है: |Mahant Rajesh Kumar Tiwari
+DESCRIPTION: कम से कम 180 और लगभग 300-450 शब्दों में स्वाभाविक, उपयोगी हिंदी विवरण दें। पहले 2 वाक्यों में इसी प्रसंग का सार और दर्शक को क्या जानने मिलेगा लिखें। फिर प्रसंग की पृष्ठभूमि/मुख्य घटनाक्रम को केवल दिए गए शीर्षक से समर्थित सीमा में समझाएँ; शास्त्रीय तथ्य न गढ़ें। फिर इस पाठ का महत्व, किस प्रकार के दर्शक के लिए उपयोगी है, और अंत में चैनल परिचय व subscribe अनुरोध दें। Keyword stuffing न करें।
+TAGS: 18-25 वास्तविक खोज वाक्यांश दें; Hindi और English दोनों में, विषय-विशिष्ट; generic tags कम रखें; # न लगाएँ।
+HASHTAGS: 4-6 प्रासंगिक hashtags दें।
+केवल valid JSON लौटाएँ: {"title":"...","description":"...","tags":["..."],"hashtags":["#..."]}
 '''
+    def extract_text(result):
+        box = result.get("result", result) if isinstance(result, dict) else {}
+        if isinstance(box, dict):
+            for key in ("response", "text", "output_text", "content"):
+                value = box.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            choices = box.get("choices") or result.get("choices") or []
+            if choices:
+                message = choices[0].get("message", {})
+                value = message.get("content") or choices[0].get("text")
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        raise ValueError("AI response में text नहीं मिला: " + json.dumps(result, ensure_ascii=False)[:700])
     def normalise(data, provider):
         title = str(data.get("title", "")).strip()
         title = re.sub(r"\s*\|\s*Mahant Rajesh Kumar Tiwari\s*$", "", title, flags=re.I).strip()
+        if not title:
+            raise ValueError("AI ने title नहीं दिया")
         title = title[:100-len(suffix)-1].rstrip() + " " + suffix
+        if not title.endswith(suffix) or len(title) > 100:
+            raise ValueError("Title suffix/length validation failed")
         description = str(data.get("description", "")).strip()
+        if len(description) < 500:
+            raise ValueError(f"Description बहुत छोटा है ({len(description)} characters); दोबारा प्रयास आवश्यक")
         tags = [str(x).strip().lstrip("#") for x in data.get("tags", []) if str(x).strip()]
         hashtags = [str(x).strip() if str(x).strip().startswith("#") else "#" + str(x).strip().replace(" ", "") for x in data.get("hashtags", []) if str(x).strip()]
-        if not description or not tags:
-            raise ValueError("AI description या tags खाली हैं")
+        if len(tags) < 12:
+            raise ValueError("AI ने पर्याप्त विषय-विशिष्ट tags नहीं दिए")
         clean_tags = []
         total = 0
         for tag in tags:
@@ -994,13 +1016,13 @@ description हिंदी में 2-4 अनुच्छेद हों।
             if total + size <= 500:
                 clean_tags.append(tag)
                 total += size
-            if len(clean_tags) >= 20:
+            if len(clean_tags) >= 25:
                 break
-        if not clean_tags:
-            raise ValueError("AI tags खाली हैं")
-        description += "\n\n" + " ".join(list(dict.fromkeys(hashtags))[:5])
+        if len(hashtags) < 3:
+            raise ValueError("AI ने पर्याप्त hashtags नहीं दिए")
+        description += "\n\n" + " ".join(list(dict.fromkeys(hashtags))[:6])
         description += f"\n\nप्रस्तुति: {AUTHOR}\n{CHANNEL_NAME}\n{WEBSITE}\n{CHANNEL_URL}"
-        log(f"{provider}: metadata तैयार।")
+        log(f"{provider}: metadata तैयार; title={title!r}, description={len(description)} chars, tags={len(clean_tags)}")
         return title, description, clean_tags
     # 1) Cloudflare Workers AI
     cf_token = os.environ.get("CLOUDFLARE_API_TOKEN")
@@ -1009,53 +1031,47 @@ description हिंदी में 2-4 अनुच्छेद हों।
         try:
             model = os.environ.get("CLOUDFLARE_TEXT_MODEL", "@cf/openai/gpt-oss-120b")
             endpoint = f"https://api.cloudflare.com/client/v4/accounts/{cf_account}/ai/run/{model}"
-            payload = {"messages": [{"role":"system","content":"Return only valid JSON in natural Hindi."},{"role":"user","content":prompt}], "max_tokens":1800, "temperature":0.4}
-            request = urllib.request.Request(endpoint, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers={"Authorization":f"Bearer {cf_token}","Content-Type":"application/json"}, method="POST")
-            with urllib.request.urlopen(request, timeout=120) as response:
+            payload = {"messages":[{"role":"system","content":"You are an expert Hindi SEO editor. Return only JSON."},{"role":"user","content":prompt}],"max_tokens":2400,"temperature":0.5}
+            request = urllib.request.Request(endpoint,data=json.dumps(payload,ensure_ascii=False).encode("utf-8"),headers={"Authorization":f"Bearer {cf_token}","Content-Type":"application/json"},method="POST")
+            with urllib.request.urlopen(request,timeout=150) as response:
                 result = json.loads(response.read().decode("utf-8"))
-            raw = result.get("result", {}).get("response", "")
-            if not raw:
-                raise ValueError("Cloudflare AI response खाली है")
+            raw = extract_text(result)
             raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.I)
             return normalise(json.loads(raw), "Cloudflare Workers AI " + model)
         except Exception as error:
-            log(f"Cloudflare AI असफल; अब GPT fallback: {error}")
+            log(f"Cloudflare AI असफल; अब GPT: {error}")
     else:
-        log("Cloudflare credentials नहीं मिले; GPT fallback चलेगा।")
+        log("Cloudflare credentials अनुपलब्ध; GPT fallback")
     # 2) OpenAI GPT
     openai_key = os.environ.get("OPENAI_API_KEY")
     if openai_key:
         try:
             model = os.environ.get("OPENAI_TEXT_MODEL", OPENAI_MODEL)
-            payload = {"model":model,"messages":[{"role":"system","content":"Return only valid JSON. You are an accurate Hindi YouTube SEO editor."},{"role":"user","content":prompt}],"response_format":{"type":"json_object"},"temperature":0.4,"max_tokens":1800}
-            request = urllib.request.Request("https://api.openai.com/v1/chat/completions", data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers={"Authorization":f"Bearer {openai_key}","Content-Type":"application/json"}, method="POST")
-            with urllib.request.urlopen(request, timeout=120) as response:
+            payload = {"model":model,"messages":[{"role":"system","content":"Return only valid JSON. You are an expert Hindi YouTube SEO researcher."},{"role":"user","content":prompt}],"response_format":{"type":"json_object"},"temperature":0.5,"max_completion_tokens":2400}
+            request = urllib.request.Request("https://api.openai.com/v1/chat/completions",data=json.dumps(payload,ensure_ascii=False).encode("utf-8"),headers={"Authorization":f"Bearer {openai_key}","Content-Type":"application/json"},method="POST")
+            with urllib.request.urlopen(request,timeout=150) as response:
                 result = json.loads(response.read().decode("utf-8"))
             raw = result["choices"][0]["message"]["content"]
             return normalise(json.loads(raw), "OpenAI GPT " + model)
         except Exception as error:
-            log(f"GPT असफल; अब Gemini fallback: {error}")
+            log(f"GPT असफल; अब Gemini: {error}")
     else:
-        log("OPENAI_API_KEY नहीं मिला; Gemini fallback चलेगा।")
-    # 3) Google Gemini
+        log("OPENAI_API_KEY अनुपलब्ध; Gemini fallback")
+    # 3) Gemini — current stable model; 2.5 Flash is not used as default
     gemini_key = os.environ.get("GEMINI_API_KEY")
     if gemini_key:
         try:
-            model = os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
+            model = os.environ.get("GEMINI_TEXT_MODEL", "gemini-3.8-flash")
             endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
-            payload = {"contents":[{"parts":[{"text":prompt}]}],"generationConfig":{"temperature":0.4,"responseMimeType":"application/json","maxOutputTokens":1800}}
-            request = urllib.request.Request(endpoint, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers={"Content-Type":"application/json"}, method="POST")
-            with urllib.request.urlopen(request, timeout=120) as response:
+            payload = {"contents":[{"parts":[{"text":prompt}]}],"generationConfig":{"temperature":0.5,"responseMimeType":"application/json","maxOutputTokens":2400}}
+            request = urllib.request.Request(endpoint,data=json.dumps(payload,ensure_ascii=False).encode("utf-8"),headers={"Content-Type":"application/json"},method="POST")
+            with urllib.request.urlopen(request,timeout=150) as response:
                 result = json.loads(response.read().decode("utf-8"))
             raw = result["candidates"][0]["content"]["parts"][0]["text"]
             return normalise(json.loads(raw), "Gemini " + model)
         except Exception as error:
-            log(f"Gemini भी असफल; fallback metadata: {error}")
-    title = source_title[:100-len(suffix)-1].rstrip() + " " + suffix
-    description = f"{source_title}\n\n{programme_name} के इस प्रसंग का आध्यात्मिक विवेचन सुनें।\n\nप्रस्तुति: {AUTHOR}\n{CHANNEL_NAME}\n{WEBSITE}\n{CHANNEL_URL}\n\n#SanatanDharma #Bhakti"
-    tags = ["Jyotirling Shivmath", "Mahant Rajesh Kumar Tiwari", "Sanatan Dharma", "Hindi Pravachan", "Bhakti", "Shiv Maha Puran" if programme == "shivpuran" else "Bhagavad Gita", "Hindu Dharma", "Spiritual Discourse"]
-    log("तीनों AI उपलब्ध नहीं; सुरक्षित fallback metadata उपयोग हुआ।")
-    return title, description, tags
+            log(f"Gemini भी असफल: {error}")
+    raise RuntimeError("तीनों AI से मान्य metadata नहीं मिला; सुरक्षा के लिए Broadcast नहीं बनाया जाएगा।")
 
 # ============================================================
 # CREATE NEW BROADCAST
@@ -1319,6 +1335,22 @@ def main():
         "PROGRAMME",
         ""
     ).strip().lower()
+
+    # सुरक्षित metadata test: YouTube API/Broadcast/progress में कोई बदलाव नहीं।
+    if action == "test_metadata":
+        if programme not in ("shivpuran", "bhagavadgita"):
+            fail("test_metadata के लिए PROGRAMME चुनें।")
+        lesson_index, lesson = get_next_lesson(programme, config, progress)
+        log(f"Metadata test lesson: {lesson['title']}")
+        title, description, tags = generate_youtube_metadata(programme, lesson)
+        log("===== GENERATED TITLE =====")
+        log(title)
+        log("===== GENERATED DESCRIPTION =====")
+        log(description)
+        log("===== GENERATED TAGS =====")
+        log(json.dumps(tags, ensure_ascii=False))
+        log("Metadata test पूरा; कोई Broadcast या progress बदलाव नहीं हुआ।")
+        return
 
     # सुरक्षित इमेज टेस्ट: YouTube API, Broadcast और progress में कोई बदलाव नहीं।
     if action == "test_image":
