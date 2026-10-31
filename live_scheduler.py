@@ -1421,7 +1421,12 @@ def create_broadcast(
     # --------------------------------------------------------
 
     # हर lesson के लिए Gemini से SEO title, description और tags बनाएं।
-    title, description, tags = prepared_metadata or generate_youtube_metadata(programme, lesson)
+    if prepared_metadata:
+        title = prepared_metadata["title"]
+        description = prepared_metadata["description"]
+        tags = prepared_metadata["tags"]
+    else:
+        title, description, tags = generate_youtube_metadata(programme, lesson)
 
     privacy_status = slot.get(
         "privacyStatus",
