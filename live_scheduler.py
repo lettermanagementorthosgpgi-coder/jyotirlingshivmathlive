@@ -946,8 +946,8 @@ def verify_and_fix_tags(youtube, video_id, desired_tags):
     seen = set()
     total = 0
     for item in desired_tags or []:
-        tag = re.sub(r"[\\x00-\\x1f\\x7f]", " ", str(item))
-        tag = re.sub(r"\\s+", " ", tag).strip().lstrip("#").replace(",", " ").strip()
+        tag = re.sub(r"[\x00-\x1f\x7f]", " ", str(item))
+        tag = re.sub(r"\s+", " ", tag).strip().lstrip("#").replace(",", " ").strip()
         if not tag or tag.casefold() in seen:
             continue
         size = len(tag) + (1 if clean else 0)
@@ -1125,8 +1125,8 @@ HASHTAGS: 4-6 प्रासंगिक hashtags दें।
         seen_tags = set()
         total = 0
         for item in raw_tags:
-            tag = re.sub(r"[\\x00-\\x1f\\x7f]", " ", str(item))
-            tag = re.sub(r"\\s+", " ", tag).strip().lstrip("#").strip()
+            tag = re.sub(r"[\x00-\x1f\x7f]", " ", str(item))
+            tag = re.sub(r"\s+", " ", tag).strip().lstrip("#").strip()
             tag = tag.replace(",", " ").strip()
             if not tag:
                 continue
@@ -1299,7 +1299,7 @@ def prepare_retry_run(config, progress, progress_sha, youtube):
             save_progress(progress, None)
             log("SEO title, description और tags तैयार होकर सुरक्षित हो गए।")
         except Exception as error:
-            log(f"Metadata अभी तैयार नहीं; अगली retry में केवल metadata दोबारा बनेगा: {error}")
+            log(f"SEO metadata पैकेज (title/description/tags) अभी तैयार नहीं; अगली retry में केवल यही पैकेज दोबारा बनेगा: {error}")
 
     if not pending.get("thumbnail_asset"):
         try:
@@ -1315,23 +1315,39 @@ def prepare_retry_run(config, progress, progress_sha, youtube):
         except Exception as error:
             log(f"Thumbnail अभी तैयार नहीं; अगली retry में केवल thumbnail दोबारा बनेगा: {error}")
 
-    ready = bool(pending.get("metadata") and pending.get("thumbnail_asset"))
+    metadata_ready = bool(pending.get("metadata"))
+    thumbnail_ready = bool(pending.get("thumbnail_asset"))
+    ready = metadata_ready and thumbnail_ready
     at_deadline = now >= deadline
     if not ready and not at_deadline:
-        log("चारों सामग्री अभी पूरी नहीं; Broadcast नहीं बनाया जाएगा। अगली retry की प्रतीक्षा होगी।")
+        missing = []
+        if not metadata_ready:
+            missing.extend(["SEO title", "description", "tags"])
+        if not thumbnail_ready:
+            missing.append("thumbnail")
+        log("अभी केवल ये सामग्री शेष है: " + ", ".join(missing) + "। अगली retry तक Broadcast नहीं बनेगा।")
         return
 
     if ready:
         metadata = pending["metadata"]
         github_download_binary(pending["thumbnail_asset"], THUMBNAIL_OUTPUT)
-        log("सभी सामग्री तैयार है; अब निर्धारित समय का Broadcast बनाया जाएगा।")
+        log("चारों सामग्री तैयार हैं; निर्धारित समय का Broadcast बनाया जाएगा।")
     else:
-        log("Preparation deadline आ गई; पुराना सुरक्षित fallback format इस्तेमाल होगा।")
-        metadata = safe_fallback_metadata(programme, lesson)
-        master_path = find_master_thumbnail(config)
-        fallback_image = Image.open(master_path).convert("RGB")
-        fallback_image = ImageOps.fit(fallback_image, (1280, 720), method=Image.Resampling.LANCZOS)
-        fallback_image.save(THUMBNAIL_OUTPUT, "JPEG", quality=94, optimize=True)
+        log("Preparation deadline आ गई; उपलब्ध सामग्री सुरक्षित रखते हुए केवल अनुपलब्ध सामग्री fallback से भरी जाएगी।")
+        fallback_title, fallback_description, fallback_tags = safe_fallback_metadata(programme, lesson)
+        saved_metadata = pending.get("metadata") or {}
+        metadata = {
+            "title": saved_metadata.get("title") or fallback_title,
+            "description": saved_metadata.get("description") or fallback_description,
+            "tags": saved_metadata.get("tags") or fallback_tags
+        }
+        if thumbnail_ready:
+            github_download_binary(pending["thumbnail_asset"], THUMBNAIL_OUTPUT)
+        else:
+            master_path = find_master_thumbnail(config)
+            fallback_image = Image.open(master_path).convert("RGB")
+            fallback_image = ImageOps.fit(fallback_image, (1280, 720), method=Image.Resampling.LANCZOS)
+            fallback_image.save(THUMBNAIL_OUTPUT, "JPEG", quality=94, optimize=True)
 
     broadcast_id = create_broadcast(
         youtube=youtube,
