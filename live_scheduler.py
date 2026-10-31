@@ -635,20 +635,30 @@ def create_thumbnail(
 
     # शिव पुराण के लिए footer बदलना
     if programme == "shivpuran":
-        # Replace the Gita footer text while keeping the outer thumbnail frame.
-        draw.rectangle((500, 625, 1160, 681), fill=(20, 13, 12))
+        # मुख्य विषय-पट्टिका के बराबर चौड़ी, सजावटी footer banner.
+        footer_banner = (410, 625, 1248, 686)
+        draw.rounded_rectangle(
+            footer_banner, radius=15,
+            fill=(20, 13, 12), outline=(246, 190, 35), width=3
+        )
+        draw.rounded_rectangle(
+            (418, 632, 1240, 679), radius=10,
+            outline=(125, 83, 22), width=2
+        )
         footer = "SHIV MAHA PURAN"
         # Latin font is required for English footer; Devanagari font renders squares.
         latin_candidates = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"]
         latin_path = next((p for p in latin_candidates if os.path.isfile(p)), None)
         if not latin_path:
             raise FileNotFoundError("English footer font नहीं मिला।")
-        footer_font = ImageFont.truetype(latin_path, 34)
+        footer_font = ImageFont.truetype(latin_path, 45)
         footer_box = draw.textbbox((0, 0), footer, font=footer_font)
         footer_width = footer_box[2] - footer_box[0]
-        footer_x = (1280 - footer_width) // 2
+        footer_height = footer_box[3] - footer_box[1]
+        footer_x = footer_banner[0] + (footer_banner[2] - footer_banner[0] - footer_width) // 2
+        footer_y = footer_banner[1] + (footer_banner[3] - footer_banner[1] - footer_height) // 2 - footer_box[1]
         draw.text(
-            (footer_x, 634), footer, font=footer_font,
+            (footer_x, footer_y), footer, font=footer_font,
             fill=(255, 218, 65), stroke_width=1,
             stroke_fill=(65, 30, 0)
         )
@@ -871,39 +881,65 @@ def update_existing_broadcast_time(
 # ============================================================
 
 def verify_and_fix_tags(youtube, video_id, desired_tags):
-    for attempt in range(1, 9):
+    # एक ही invalid payload को बार-बार भेजने के बजाय पहले sanitize करें।
+    clean = []
+    seen = set()
+    total = 0
+    for item in desired_tags or []:
+        tag = re.sub(r"[\\x00-\\x1f\\x7f]", " ", str(item))
+        tag = re.sub(r"\\s+", " ", tag).strip().lstrip("#").replace(",", " ").strip()
+        if not tag or tag.casefold() in seen:
+            continue
+        size = len(tag) + (1 if clean else 0)
+        if total + size > 450:
+            continue
+        clean.append(tag)
+        seen.add(tag.casefold())
+        total += size
+        if len(clean) == 20:
+            break
+    if len(clean) < 5:
+        log("चेतावनी: valid tags बहुत कम हैं; YouTube update छोड़ा गया।")
+        return False
+
+    for attempt in range(1, 4):
         try:
             response = youtube.videos().list(part="snippet", id=video_id).execute()
             items = response.get("items", [])
             if not items:
-                log(f"Video metadata अभी उपलब्ध नहीं है; पुनः प्रयास {attempt}/8।")
+                log(f"Video metadata अभी उपलब्ध नहीं; प्रयास {attempt}/3।")
                 time.sleep(5)
                 continue
 
             snippet = dict(items[0]["snippet"])
             saved_tags = snippet.get("tags", [])
-            if saved_tags and set(desired_tags).issubset(set(saved_tags)):
+            if set(clean).issubset(set(saved_tags)):
                 log(f"YouTube पर {len(saved_tags)} tags सुरक्षित और सत्यापित हैं।")
                 return True
 
-            snippet["tags"] = desired_tags
+            snippet["tags"] = clean
             youtube.videos().update(
                 part="snippet",
                 body={"id": video_id, "snippet": snippet}
             ).execute()
 
-            time.sleep(2)
             check = youtube.videos().list(part="snippet", id=video_id).execute()
             check_items = check.get("items", [])
-            if check_items and set(desired_tags).issubset(set(check_items[0]["snippet"].get("tags", []))):
+            if check_items and set(clean).issubset(set(check_items[0]["snippet"].get("tags", []))):
                 log("Tags YouTube पर सुरक्षित और सत्यापित हो गए।")
                 return True
-            log(f"Tags अभी सत्यापित नहीं हुए; पुनः प्रयास {attempt}/8।")
+            log(f"Tags अभी सत्यापित नहीं हुए; प्रयास {attempt}/3।")
+        except HttpError as error:
+            log(f"YouTube ने tags update अस्वीकार किया: {error}")
+            if getattr(error, "status_code", None) == 400 or "invalidTags" in str(error):
+                log("invalidTags मिला; वही अनुरोध दोहराया नहीं जाएगा।")
+                return False
         except Exception as error:
-            log(f"Tags verification attempt {attempt}/8: {error}")
-        time.sleep(5)
+            log(f"Tags verification प्रयास {attempt}/3: {error}")
+        if attempt < 3:
+            time.sleep(5)
 
-    log("चेतावनी: 8 प्रयासों के बाद भी YouTube Tags सत्यापित नहीं हो सके।")
+    log("चेतावनी: 3 प्रयासों के बाद भी YouTube Tags सत्यापित नहीं हो सके।")
     return False
 
 
@@ -997,27 +1033,54 @@ HASHTAGS: 4-6 प्रासंगिक hashtags दें।
         title = re.sub(r"\s*\|\s*Mahant Rajesh Kumar Tiwari\s*$", "", title, flags=re.I).strip()
         if not title:
             raise ValueError("AI ने title नहीं दिया")
-        title = title[:100-len(suffix)-1].rstrip() + " " + suffix
+        # पूरे शब्दों को सुरक्षित रखते हुए suffix सहित 100 अक्षरों में रखें।
+        max_prefix = 100 - len(suffix) - 1
+        if len(title) > max_prefix:
+            words = title.split()
+            kept = []
+            for word in words:
+                candidate = " ".join(kept + [word])
+                if len(candidate) > max_prefix:
+                    break
+                kept.append(word)
+            title = " ".join(kept).rstrip(" -|:।")
+        if not title:
+            raise ValueError("SEO title suffix से पहले खाली हो गया")
+        title = title + " " + suffix
         if not title.endswith(suffix) or len(title) > 100:
             raise ValueError("Title suffix/length validation failed")
         description = str(data.get("description", "")).strip()
         if len(description) < 500:
             raise ValueError(f"Description बहुत छोटा है ({len(description)} characters); दोबारा प्रयास आवश्यक")
-        tags = [str(x).strip().lstrip("#") for x in data.get("tags", []) if str(x).strip()]
+        raw_tags = data.get("tags", [])
+        if not isinstance(raw_tags, list):
+            raise ValueError("AI tags सूची के रूप में नहीं मिले")
         hashtags = [str(x).strip() if str(x).strip().startswith("#") else "#" + str(x).strip().replace(" ", "") for x in data.get("hashtags", []) if str(x).strip()]
-        if len(tags) < 12:
+        if len(raw_tags) < 12:
             raise ValueError("AI ने पर्याप्त विषय-विशिष्ट tags नहीं दिए")
+        # YouTube tags को plain text, unique और conservative कुल सीमा में रखें।
         clean_tags = []
+        seen_tags = set()
         total = 0
-        for tag in tags:
-            if tag.lower() in [x.lower() for x in clean_tags]:
+        for item in raw_tags:
+            tag = re.sub(r"[\\x00-\\x1f\\x7f]", " ", str(item))
+            tag = re.sub(r"\\s+", " ", tag).strip().lstrip("#").strip()
+            tag = tag.replace(",", " ").strip()
+            if not tag:
+                continue
+            key = tag.casefold()
+            if key in seen_tags:
                 continue
             size = len(tag) + (1 if clean_tags else 0)
-            if total + size <= 500:
-                clean_tags.append(tag)
-                total += size
-            if len(clean_tags) >= 25:
+            if total + size > 450:
+                continue
+            clean_tags.append(tag)
+            seen_tags.add(key)
+            total += size
+            if len(clean_tags) >= 20:
                 break
+        if len(clean_tags) < 12:
+            raise ValueError(f"साफ़ करने के बाद केवल {len(clean_tags)} valid tags बचे")
         if len(hashtags) < 3:
             raise ValueError("AI ने पर्याप्त hashtags नहीं दिए")
         description += "\n\n" + " ".join(list(dict.fromkeys(hashtags))[:6])
