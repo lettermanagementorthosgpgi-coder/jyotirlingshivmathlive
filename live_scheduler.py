@@ -1257,12 +1257,21 @@ def safe_fallback_metadata(programme, lesson):
     return title, description, tags
 
 
-def prepare_retry_run(config, progress, progress_sha, youtube):
+def prepare_retry_run(config, progress, progress_sha, youtube, programme_override=None):
     now = datetime.now(TIMEZONE)
-    programme, scheduled_time, deadline = get_retry_target(now)
-    if not programme:
-        log("अभी किसी कार्यक्रम की preparation window नहीं है; कोई काम नहीं किया जाएगा।")
-        return
+    if programme_override:
+        if programme_override not in ("shivpuran", "bhagavadgita"):
+            fail("PROGRAMME केवल shivpuran या bhagavadgita हो सकता है।")
+        programme = programme_override
+        selected_slot = get_slot(config, programme)
+        scheduled_time = get_scheduled_time(selected_slot)
+        deadline = scheduled_time - timedelta(hours=1)
+        log(f"Manual programme selection honoured: {programme}")
+    else:
+        programme, scheduled_time, deadline = get_retry_target(now)
+        if not programme:
+            log("अभी किसी कार्यक्रम की preparation window नहीं है; कोई काम नहीं किया जाएगा।")
+            return
 
     date_string = scheduled_time.strftime("%Y-%m-%d")
     saved = get_saved_broadcast(progress, programme, date_string)
@@ -1670,7 +1679,7 @@ def main():
     youtube = get_youtube_service()
 
     if action == "prepare_retry":
-        prepare_retry_run(config, progress, progress_sha, youtube)
+        prepare_retry_run(config, progress, progress_sha, youtube, programme or None)
         return
 
     # --------------------------------------------------------
