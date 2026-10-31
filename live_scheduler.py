@@ -554,7 +554,7 @@ def get_thumbnail_title(programme, lesson, lesson_index, config=None):
 
     if chapter is None:
         match = re.search(
-            r"(?:अध्याय|अध्याय संख्या|Adhyay|Chapter)\\s*[-:]?\\s*(\\d+)",
+            r"(?:अध्याय|अध्याय संख्या|Adhyay|Chapter)\s*[-:]?\s*(\d+)",
             title,
             re.I
         )
@@ -562,7 +562,7 @@ def get_thumbnail_title(programme, lesson, lesson_index, config=None):
             chapter = match.group(1)
 
     clean_title = re.sub(
-        r"^(?:अध्याय\\s*)?\\d+\\s*[:：.-]?\\s*",
+        r"^(?:अध्याय\s*)?\d+\s*[:：.-]?\s*",
         "",
         title
     ).strip()
