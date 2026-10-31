@@ -1,6 +1,6 @@
 {
   "shivpuran": 177,
-  "bhagavadgita": 11,
+  "bhagavadgita": 12,
   "broadcasts": {
     "shivpuran": {
       "2026-10-31": {
@@ -77,5 +77,6 @@
       },
       "thumbnail_asset": "retry_assets/bhagavadgita_2026-10-31.jpg"
     }
-  }
+  },
+  "bhagavadgita_next_title": "अध्याय 13 — क्षेत्रक्षेत्रज्ञविभागयोगः — शरीर (क्षेत्र) एवं आत्मा (क्षेत्रज्ञ) के भेद का योग"
 }
