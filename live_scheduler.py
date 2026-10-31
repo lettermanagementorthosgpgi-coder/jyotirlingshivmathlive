@@ -217,6 +217,66 @@ def github_request(path, method="GET", payload=None):
         )
 
 
+
+
+def github_upload_binary(path, local_path):
+    """Persist a generated image in the repository for the next retry run."""
+    with open(local_path, "rb") as image_file:
+        encoded = base64.b64encode(image_file.read()).decode("ascii")
+    current = None
+    try:
+        current = github_request(f"contents/{path}")
+    except Exception:
+        current = None
+    payload = {
+        "message": f"Save retry thumbnail {path}",
+        "content": encoded
+    }
+    if current and current.get("sha"):
+        payload["sha"] = current["sha"]
+    github_request(f"contents/{path}", method="PUT", payload=payload)
+    log(f"Retry thumbnail GitHub पर सुरक्षित: {path}")
+    return path
+
+
+def github_download_binary(path, local_path):
+    result = github_request(f"contents/{path}")
+    if not result or not result.get("content"):
+        raise RuntimeError(f"Retry image GitHub पर नहीं मिली: {path}")
+    raw = base64.b64decode(result["content"])
+    with open(local_path, "wb") as image_file:
+        image_file.write(raw)
+    if len(raw) < 20000:
+        raise RuntimeError("GitHub से मिली retry thumbnail अधूरी है")
+    return local_path
+
+
+def research_youtube_topic(youtube, programme, lesson):
+    """Use YouTube search results as grounded keyword context, not as factual authority."""
+    query = str(lesson.get("title", "")).strip()
+    if programme == "shivpuran":
+        query += " शिव पुराण कथा"
+    else:
+        query += " भगवद्गीता"
+    response = youtube.search().list(
+        part="snippet",
+        q=query,
+        type="video",
+        maxResults=5,
+        relevanceLanguage="hi"
+    ).execute()
+    rows = []
+    for item in response.get("items", []):
+        snippet = item.get("snippet", {})
+        title = str(snippet.get("title", "")).strip()
+        description = str(snippet.get("description", "")).strip()
+        if title:
+            rows.append({"title": title[:180], "description": description[:350]})
+    if not rows:
+        raise RuntimeError("YouTube topic research में प्रासंगिक परिणाम नहीं मिले")
+    return rows
+
+
 def get_progress():
 
     try:
@@ -994,7 +1054,7 @@ def ensure_playlist_assignment(
 # GEMINI SEO METADATA GENERATION
 # ============================================================
 
-def generate_youtube_metadata(programme, lesson):
+def generate_youtube_metadata(programme, lesson, research_context=None):
     """Generate high-quality metadata; never silently publish generic fallback."""
     source_title = str(lesson.get("title", "धार्मिक प्रवचन")).strip()
     programme_name = "शिव महापुराण" if programme == "shivpuran" else "श्रीमद्भगवद्गीता"
@@ -1003,6 +1063,8 @@ def generate_youtube_metadata(programme, lesson):
 आप एक वरिष्ठ हिंदी धार्मिक शोधकर्ता, YouTube SEO विशेषज्ञ और devotional content writer हैं।
 कार्यक्रम: {programme_name}
 आज का वास्तविक पाठ/प्रसंग: {source_title}
+YouTube पर इसी विषय की खोज से प्राप्त संदर्भ (केवल खोज-शब्द/प्रासंगिकता समझने हेतु; इन्हें शास्त्रीय प्रमाण न मानें):
+{json.dumps(research_context or [], ensure_ascii=False)}
 चैनल: {CHANNEL_NAME}
 प्रस्तुतकर्ता: {AUTHOR}
 वेबसाइट: {WEBSITE}
@@ -1140,6 +1202,154 @@ HASHTAGS: 4-6 प्रासंगिक hashtags दें।
 # CREATE NEW BROADCAST
 # ============================================================
 
+def get_retry_target(now):
+    """Return (programme, scheduled datetime, deadline) only inside its preparation window."""
+    morning_start = now.replace(hour=19, minute=0, second=0, microsecond=0)
+    morning_end_today = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    evening_start = now.replace(hour=8, minute=0, second=0, microsecond=0)
+    evening_end = now.replace(hour=18, minute=0, second=0, microsecond=0)
+
+    if now >= morning_start:
+        target_date = (now + timedelta(days=1)).date()
+        scheduled = datetime.combine(target_date, datetime.min.time(), tzinfo=TIMEZONE).replace(hour=7)
+        deadline = scheduled.replace(hour=6)
+        return "shivpuran", scheduled, deadline
+    if now <= morning_end_today:
+        scheduled = now.replace(hour=7, minute=0, second=0, microsecond=0)
+        deadline = now.replace(hour=6, minute=0, second=0, microsecond=0)
+        return "shivpuran", scheduled, deadline
+    if evening_start <= now <= evening_end:
+        scheduled = now.replace(hour=19, minute=0, second=0, microsecond=0)
+        deadline = evening_end
+        return "bhagavadgita", scheduled, deadline
+    return None, None, None
+
+
+def safe_fallback_metadata(programme, lesson):
+    programme_name = "शिव महापुराण" if programme == "shivpuran" else "श्रीमद्भगवद्गीता"
+    suffix = "|Mahant Rajesh Kumar Tiwari"
+    base = str(lesson.get("title", programme_name)).strip()
+    max_prefix = 100 - len(suffix) - 1
+    words = []
+    for word in base.split():
+        candidate = " ".join(words + [word])
+        if len(candidate) > max_prefix:
+            break
+        words.append(word)
+    title = (" ".join(words) or programme_name) + " " + suffix
+    description = (
+        f"{programme_name} का आज का पाठ: {lesson.get('title', '')}. "
+        f"इस धार्मिक पाठ में दिए गए प्रसंग का वाचन एवं व्याख्या प्रस्तुत की जाएगी। "
+        f"प्रस्तुति: {AUTHOR}\n{CHANNEL_NAME}\n{WEBSITE}\n{CHANNEL_URL}"
+    )
+    tags = ["शिव पुराण" if programme == "shivpuran" else "भगवद्गीता",
+            "Jyotirling Shivmath", "Mahant Rajesh Kumar Tiwari",
+            "धार्मिक कथा", "सनातन धर्म"]
+    return title, description, tags
+
+
+def prepare_retry_run(config, progress, progress_sha, youtube):
+    now = datetime.now(TIMEZONE)
+    programme, scheduled_time, deadline = get_retry_target(now)
+    if not programme:
+        log("अभी किसी कार्यक्रम की preparation window नहीं है; कोई काम नहीं किया जाएगा।")
+        return
+
+    date_string = scheduled_time.strftime("%Y-%m-%d")
+    saved = get_saved_broadcast(progress, programme, date_string)
+    if saved:
+        log(f"{programme} के लिए {date_string} का Broadcast पहले से दर्ज है; retry छोड़ा गया।")
+        return
+
+    slot = get_slot(config, programme)
+    lesson_index, lesson = get_next_lesson(programme, config, progress)
+    pending_all = progress.setdefault("pending_preparation", {})
+    pending = pending_all.get(programme, {})
+    if pending.get("date") != date_string or pending.get("lesson") != lesson["title"]:
+        pending = {
+            "date": date_string,
+            "lesson": lesson["title"],
+            "research": None,
+            "metadata": None,
+            "thumbnail_asset": None
+        }
+        pending_all[programme] = pending
+        save_progress(progress, progress_sha)
+
+    log(f"Retry programme: {programme}; target: {scheduled_time.isoformat()}; lesson: {lesson['title']}")
+
+    if not pending.get("research"):
+        try:
+            pending["research"] = research_youtube_topic(youtube, programme, lesson)
+            save_progress(progress, None)
+            log("YouTube topic research सुरक्षित हो गया।")
+        except Exception as error:
+            log(f"YouTube topic research अभी असफल; अगली retry में पुनः प्रयास होगा: {error}")
+
+    if not pending.get("metadata") and pending.get("research"):
+        try:
+            title, description, tags = generate_youtube_metadata(
+                programme, lesson, pending.get("research")
+            )
+            pending["metadata"] = {
+                "title": title,
+                "description": description,
+                "tags": tags
+            }
+            save_progress(progress, None)
+            log("SEO title, description और tags तैयार होकर सुरक्षित हो गए।")
+        except Exception as error:
+            log(f"Metadata अभी तैयार नहीं; अगली retry में केवल metadata दोबारा बनेगा: {error}")
+
+    if not pending.get("thumbnail_asset"):
+        try:
+            master_path = find_master_thumbnail(config)
+            thumbnail_path = create_thumbnail(
+                master_path, programme, lesson, lesson_index, config
+            )
+            asset_path = f"retry_assets/{programme}_{date_string}.jpg"
+            github_upload_binary(asset_path, thumbnail_path)
+            pending["thumbnail_asset"] = asset_path
+            save_progress(progress, None)
+            log("Thumbnail तैयार और retry के लिए सुरक्षित हो गया।")
+        except Exception as error:
+            log(f"Thumbnail अभी तैयार नहीं; अगली retry में केवल thumbnail दोबारा बनेगा: {error}")
+
+    ready = bool(pending.get("metadata") and pending.get("thumbnail_asset"))
+    at_deadline = now >= deadline
+    if not ready and not at_deadline:
+        log("चारों सामग्री अभी पूरी नहीं; Broadcast नहीं बनाया जाएगा। अगली retry की प्रतीक्षा होगी।")
+        return
+
+    if ready:
+        metadata = pending["metadata"]
+        github_download_binary(pending["thumbnail_asset"], THUMBNAIL_OUTPUT)
+        log("सभी सामग्री तैयार है; अब निर्धारित समय का Broadcast बनाया जाएगा।")
+    else:
+        log("Preparation deadline आ गई; पुराना सुरक्षित fallback format इस्तेमाल होगा।")
+        metadata = safe_fallback_metadata(programme, lesson)
+        master_path = find_master_thumbnail(config)
+        fallback_image = Image.open(master_path).convert("RGB")
+        fallback_image = ImageOps.fit(fallback_image, (1280, 720), method=Image.Resampling.LANCZOS)
+        fallback_image.save(THUMBNAIL_OUTPUT, "JPEG", quality=94, optimize=True)
+
+    broadcast_id = create_broadcast(
+        youtube=youtube,
+        slot=slot,
+        lesson=lesson,
+        lesson_index=lesson_index,
+        scheduled_time=scheduled_time,
+        config=config,
+        progress=progress,
+        progress_sha=None,
+        prepared_metadata=metadata,
+        prepared_thumbnail_path=THUMBNAIL_OUTPUT
+    )
+    pending_all.pop(programme, None)
+    save_progress(progress, None)
+    log(f"Retry scheduling पूरा: {broadcast_id}")
+
+
 def create_broadcast(
     youtube,
     slot,
@@ -1148,7 +1358,9 @@ def create_broadcast(
     scheduled_time,
     config,
     progress,
-    progress_sha
+    progress_sha,
+    prepared_metadata=None,
+    prepared_thumbnail_path=None
 ):
     programme = slot["key"]
     date_string = scheduled_time.strftime("%Y-%m-%d")
@@ -1209,7 +1421,7 @@ def create_broadcast(
     # --------------------------------------------------------
 
     # हर lesson के लिए Gemini से SEO title, description और tags बनाएं।
-    title, description, tags = generate_youtube_metadata(programme, lesson)
+    title, description, tags = prepared_metadata or generate_youtube_metadata(programme, lesson)
 
     privacy_status = slot.get(
         "privacyStatus",
@@ -1267,21 +1479,17 @@ def create_broadcast(
     # --------------------------------------------------------
 
     try:
-        master_path = find_master_thumbnail(config)
-
-        thumbnail_path = create_thumbnail(
-            master_path=master_path,
-            programme=programme,
-            lesson=lesson,
-            lesson_index=lesson_index,
-            config=config
-        )
-
-        upload_thumbnail(
-            youtube,
-            broadcast_id,
-            thumbnail_path
-        )
+        thumbnail_path = prepared_thumbnail_path
+        if not thumbnail_path:
+            master_path = find_master_thumbnail(config)
+            thumbnail_path = create_thumbnail(
+                master_path=master_path,
+                programme=programme,
+                lesson=lesson,
+                lesson_index=lesson_index,
+                config=config
+            )
+        upload_thumbnail(youtube, broadcast_id, thumbnail_path)
 
     except Exception as error:
         log(
@@ -1430,6 +1638,10 @@ def main():
         return
 
     youtube = get_youtube_service()
+
+    if action == "prepare_retry":
+        prepare_retry_run(config, progress, progress_sha, youtube)
+        return
 
     # --------------------------------------------------------
     # पुराना Broadcast का समय बदलना
