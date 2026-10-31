@@ -3,11 +3,12 @@ name: Jyotirling Shivmath Live Scheduler
 
 on:
   schedule:
-    # Shiv Puran: 07:00 AM IST
-    - cron: "30 1 * * *"
+    # Shiv Puran preparation: 19:00 IST previous evening through 06:00 IST.
+    - cron: "0,30 13-23 * * *"
+    - cron: "0,30 0 * * *"
 
-    # Bhagavad Gita: 07:00 PM IST
-    - cron: "30 13 * * *"
+    # Bhagavad Gita preparation: 08:00–18:00 IST.
+    - cron: "0,30 2-12 * * *"
 
   workflow_dispatch:
     inputs:
@@ -20,7 +21,8 @@ on:
           - update_time
           - test_image
           - test_metadata
-        default: create
+          - prepare_retry
+        default: prepare_retry
 
       programme:
         description: "Choose programme"
@@ -85,7 +87,7 @@ jobs:
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-          ACTION: ${{ inputs.action || 'create' }}
+          ACTION: ${{ inputs.action || 'prepare_retry' }}
           PROGRAMME: ${{ inputs.programme }}
           BROADCAST_DATE: ${{ inputs.broadcast_date }}
           ACTUAL_TIME: ${{ inputs.actual_time }}
