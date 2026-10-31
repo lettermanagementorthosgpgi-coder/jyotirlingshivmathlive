@@ -542,46 +542,54 @@ def fit_font(
     )
 
 
-def get_thumbnail_title(programme, lesson, lesson_index):
+def get_thumbnail_title(programme, lesson, lesson_index, config=None):
     """
-    Thumbnail पर दिखने वाला अध्याय/प्रसंग शीर्षक तैयार करता है।
+    Thumbnail पर अध्याय क्रमांक:
+    शिव पुराण में प्रत्येक संहिता/खंड की अपनी config.json सूची
+    के भीतर क्रमांक 1 से शुरू होता है। बाहरी संस्करणों का क्रम
+    इस्तेमाल नहीं किया जाता।
     """
     title = lesson.get("title", "धार्मिक प्रवचन").strip()
     chapter = lesson.get("chapter")
 
     if chapter is None:
         match = re.search(
-            r"(?:अध्याय|अध्याय संख्या|Adhyay|Chapter)\s*[-:]?\s*(\d+)",
+            r"(?:अध्याय|अध्याय संख्या|Adhyay|Chapter)\\s*[-:]?\\s*(\\d+)",
             title,
             re.I
         )
-
         if match:
             chapter = match.group(1)
+
+    clean_title = re.sub(
+        r"^(?:अध्याय\\s*)?\\d+\\s*[:：.-]?\\s*",
+        "",
+        title
+    ).strip()
 
     if programme == "bhagavadgita":
         if chapter is None:
             chapter = lesson_index + 1
-
-        clean_title = re.sub(
-            r"^(?:अध्याय\s*)?\d+\s*[:：.-]?\s*",
-            "",
-            title
-        ).strip()
-
         return f"अध्याय {chapter}: {clean_title}"
 
-    clean_title = re.sub(
-        r"^(?:अध्याय\s*)?\d+\s*[:：.-]?\s*",
-        "",
-        title
-    ).strip()
+    if chapter is None and config:
+        lessons = config.get("lessons", {}).get("shivpuran", [])
+        section_prefix = title.split(" - ", 1)[0].strip()
+
+        # संहिता/खंड का क्रम उसकी अपनी config.json सूची में 1 से शुरू।
+        if "संहिता" in section_prefix:
+            chapter = 0
+            for index, item in enumerate(lessons):
+                item_title = normalise_lesson(item).get("title", "").strip()
+                if item_title.split(" - ", 1)[0].strip() == section_prefix:
+                    chapter += 1
+                if index == lesson_index:
+                    break
 
     if chapter is not None:
         return f"अध्याय {chapter}: {clean_title}"
 
     return clean_title
-
 
 def create_thumbnail(
     master_path,
@@ -640,7 +648,8 @@ def create_thumbnail(
     title = get_thumbnail_title(
         programme,
         lesson,
-        lesson_index
+        lesson_index,
+        config
     )
 
     # अध्याय शीर्षक
