@@ -22,7 +22,7 @@ on:
           - test_image
           - test_metadata
           - prepare_retry
-        default: prepare_retry
+        default: test_image
 
       programme:
         description: "Choose programme"
