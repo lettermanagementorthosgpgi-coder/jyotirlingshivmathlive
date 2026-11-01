@@ -575,6 +575,18 @@ def get_thumbnail_title(programme, lesson, lesson_index, config=None):
                 if index == lesson_index:
                     break
 
+    if programme == "shivpuran":
+        section = title.split(" - ", 1)[0].strip()
+        if "द्वितीय खंड" in title:
+            section_label = "श्री रुद्र संहिता — द्वितीय खंड"
+        elif section:
+            section_label = section.replace("-", "—").strip()
+        else:
+            section_label = "श्री रुद्र संहिता"
+        if chapter is not None:
+            return f"{section_label} — अध्याय {chapter}"
+        return section_label
+
     if chapter is not None:
         return f"अध्याय {chapter}: {clean_title}"
     return clean_title
@@ -730,26 +742,54 @@ def create_thumbnail(
             )
             y += line_height + gap
     else:
-        # Keep the existing Shiv Puran title treatment unchanged.
-        plaque = (410, 480, 1248, 620)
+        # Shiv Puran: hook on top, section/chapter plaque in the middle.
+        lesson_title = str(lesson.get("title", "")).strip()
+        if "श्रीहरि और वीरभद्र का युद्ध" in lesson_title:
+            topic_hook = "जब वीरभद्र ने रोक दिया श्रीहरि का सुदर्शन चक्र!"
+        else:
+            topic_hook = re.sub(
+                r"^.*?\s-\s*", "", lesson_title, count=1
+            ).strip() or lesson_title
+
+        hook_font = fit_font(
+            draw, topic_hook, font_path, max_width=820,
+            start_size=38, min_size=23
+        )
+        hook_box = draw.textbbox(
+            (0, 0), topic_hook, font=hook_font,
+            language="hi", stroke_width=1
+        )
+        hook_width = hook_box[2] - hook_box[0]
+        hook_x = (1280 - hook_width) // 2
+        hook_y = 493 - hook_box[1]
+        draw.text(
+            (hook_x, hook_y), topic_hook, font=hook_font,
+            fill=(255, 245, 210), stroke_width=1,
+            stroke_fill=(55, 25, 0), language="hi"
+        )
+
+        # Match the Bhagavad Gita chapter plaque dimensions and styling.
+        plaque = (410, 550, 1248, 611)
         draw.rounded_rectangle(
-            plaque, radius=17, fill=(2, 14, 35),
+            plaque, radius=15, fill=(2, 14, 35),
             outline=(246, 190, 35), width=3
         )
-        font = fit_font(
-            draw, title, font_path, max_width=800,
-            start_size=61, min_size=31
+        chapter_font = fit_font(
+            draw, title, font_path, max_width=790,
+            start_size=42, min_size=22
         )
-        bbox = draw.textbbox(
-            (0, 0), title, font=font, language="hi", stroke_width=2
+        chapter_box = draw.textbbox(
+            (0, 0), title, font=chapter_font,
+            language="hi", stroke_width=1
         )
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
-        x = plaque[0] + (plaque[2] - plaque[0] - text_width) // 2
-        y = plaque[1] + (plaque[3] - plaque[1] - text_height) // 2 - bbox[1]
+        chapter_width = chapter_box[2] - chapter_box[0]
+        chapter_height = chapter_box[3] - chapter_box[1]
+        chapter_x = plaque[0] + (plaque[2] - plaque[0] - chapter_width) // 2
+        chapter_y = plaque[1] + (plaque[3] - plaque[1] - chapter_height) // 2 - chapter_box[1]
         draw.text(
-            (x, y), title, font=font, fill=(255, 218, 65),
-            stroke_width=2, stroke_fill=(105, 34, 0), language="hi"
+            (chapter_x, chapter_y), title, font=chapter_font,
+            fill=(255, 218, 65), stroke_width=1,
+            stroke_fill=(105, 34, 0), language="hi"
         )
 
     # शिव पुराण के लिए footer बदलना
@@ -764,13 +804,11 @@ def create_thumbnail(
             (418, 632, 1240, 679), radius=10,
             outline=(125, 83, 22), width=2
         )
-        footer = "SHIV MAHA PURAN"
-        # Latin font is required for English footer; Devanagari font renders squares.
-        latin_candidates = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"]
-        latin_path = next((p for p in latin_candidates if os.path.isfile(p)), None)
-        if not latin_path:
-            raise FileNotFoundError("English footer font नहीं मिला।")
-        footer_font = ImageFont.truetype(latin_path, 45)
+        footer = "शिव महापुराण"
+        footer_font = fit_font(
+            draw, footer, font_path, max_width=790,
+            start_size=45, min_size=30
+        )
         footer_box = draw.textbbox((0, 0), footer, font=footer_font)
         footer_width = footer_box[2] - footer_box[0]
         footer_height = footer_box[3] - footer_box[1]
