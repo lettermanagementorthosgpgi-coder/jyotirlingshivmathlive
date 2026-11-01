@@ -543,40 +543,29 @@ def fit_font(
 
 
 def get_thumbnail_title(programme, lesson, lesson_index, config=None):
-    """
-    Thumbnail पर अध्याय क्रमांक:
-    शिव पुराण में प्रत्येक संहिता/खंड की अपनी config.json सूची
-    के भीतर क्रमांक 1 से शुरू होता है। बाहरी संस्करणों का क्रम
-    इस्तेमाल नहीं किया जाता।
-    """
-    title = lesson.get("title", "धार्मिक प्रवचन").strip()
+    """Return the Sanskrit chapter name for Gita; preserve other programmes."""
+    title = str(lesson.get("title", "धार्मिक प्रवचन")).strip()
     chapter = lesson.get("chapter")
 
     if chapter is None:
         match = re.search(
-            r"(?:अध्याय|अध्याय संख्या|Adhyay|Chapter)\s*[-:]?\s*(\d+)",
-            title,
-            re.I
+            r"(?:अध्याय|अध्याय संख्या|Adhyay|Chapter)\\s*[-:]?\\s*(\\d+)",
+            title, re.I
         )
         if match:
             chapter = match.group(1)
 
     clean_title = re.sub(
-        r"^(?:अध्याय\s*)?\d+\s*[:：.-]?\s*",
-        "",
-        title
+        r"^(?:अध्याय\\s*)?\\d+\\s*[:：.\\-—–]?\\s*", "", title
     ).strip()
 
     if programme == "bhagavadgita":
-        if chapter is None:
-            chapter = lesson_index + 1
-        return f"अध्याय {chapter}: {clean_title}"
+        # config entries use: chapter number — Sanskrit name — Hindi meaning
+        return re.split(r"\\s*[—–]\\s*", clean_title, maxsplit=1)[0].strip()
 
     if chapter is None and config:
         lessons = config.get("lessons", {}).get("shivpuran", [])
         section_prefix = title.split(" - ", 1)[0].strip()
-
-        # संहिता/खंड का क्रम उसकी अपनी config.json सूची में 1 से शुरू।
         if "संहिता" in section_prefix:
             chapter = 0
             for index, item in enumerate(lessons):
@@ -588,8 +577,29 @@ def get_thumbnail_title(programme, lesson, lesson_index, config=None):
 
     if chapter is not None:
         return f"अध्याय {chapter}: {clean_title}"
-
     return clean_title
+
+
+def get_gita_thumbnail_meaning(lesson):
+    """Extract the Hindi explanation after the Sanskrit name in config.json."""
+    title = str(lesson.get("title", "")).strip()
+    title = re.sub(
+        r"^(?:अध्याय\\s*)?\\d+\\s*[:：.\\-—–]?\\s*", "", title
+    ).strip()
+    parts = re.split(r"\\s*[—–]\\s*", title, maxsplit=2)
+    return parts[1].strip() if len(parts) > 1 else ""
+
+
+def split_balanced_devanagari(text):
+    """Split at a word boundary, keeping both lines as similar in width as possible."""
+    words = text.split()
+    if len(words) < 2:
+        return [text]
+    candidates = []
+    for i in range(1, len(words)):
+        left, right = " ".join(words[:i]), " ".join(words[i:])
+        candidates.append((abs(len(left) - len(right)), [left, right]))
+    return min(candidates, key=lambda item: item[0])[1]
 
 def create_thumbnail(
     master_path,
@@ -652,55 +662,95 @@ def create_thumbnail(
         config
     )
 
-    # अध्याय शीर्षक
-    # Cover the full original title plaque, including old master text.
-    plaque = (410, 480, 1248, 620)
+    # Bhagavad Gita title and meaning layout.
+    if programme == "bhagavadgita":
+        meaning = get_gita_thumbnail_meaning(lesson)
+        if meaning:
+            meaning_font = fit_font(
+                draw, meaning, font_path, max_width=820,
+                start_size=35, min_size=23
+            )
+            meaning_box = draw.textbbox(
+                (0, 0), meaning, font=meaning_font,
+                language="hi", stroke_width=1
+            )
+            meaning_width = meaning_box[2] - meaning_box[0]
+            meaning_x = (1280 - meaning_width) // 2
+            meaning_y = 494 - meaning_box[1]
+            draw.text(
+                (meaning_x, meaning_y), meaning,
+                font=meaning_font, fill=(255, 245, 210),
+                stroke_width=1, stroke_fill=(55, 25, 0),
+                language="hi"
+            )
 
-    draw.rounded_rectangle(
-        plaque,
-        radius=17,
-        fill=(2, 14, 35),
-        outline=(246, 190, 35),
-        width=3
-    )
+        # Match the lower scripture-name banner's 838 x 61 px dimensions.
+        plaque = (410, 550, 1248, 611)
+        draw.rounded_rectangle(
+            plaque, radius=15, fill=(2, 14, 35),
+            outline=(246, 190, 35), width=3
+        )
+        font = fit_font(
+            draw, title, font_path, max_width=790,
+            start_size=48, min_size=29
+        )
+        title_lines = [title]
+        title_box = draw.textbbox(
+            (0, 0), title, font=font, language="hi", stroke_width=1
+        )
+        if title_box[2] - title_box[0] > 790:
+            title_lines = split_balanced_devanagari(title)
+            font = fit_font(
+                draw, max(title_lines, key=len), font_path,
+                max_width=790, start_size=36, min_size=25
+            )
+            # Give the two-line fallback enough vertical room while retaining
+            # the same banner width and visual style.
+            plaque = (410, 536, 1248, 625)
+            draw.rounded_rectangle(
+                plaque, radius=15, fill=(2, 14, 35),
+                outline=(246, 190, 35), width=3
+            )
 
-    font = fit_font(
-        draw,
-        title,
-        font_path,
-        max_width=800,
-        start_size=61,
-        min_size=31
-    )
-
-    bbox = draw.textbbox(
-        (0, 0),
-        title,
-        font=font,
-        language="hi",
-        stroke_width=2
-    )
-
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
-
-    x = plaque[0] + (
-        plaque[2] - plaque[0] - text_width
-    ) // 2
-
-    y = plaque[1] + (
-        plaque[3] - plaque[1] - text_height
-    ) // 2 - bbox[1]
-
-    draw.text(
-        (x, y),
-        title,
-        font=font,
-        fill=(255, 218, 65),
-        stroke_width=2,
-        stroke_fill=(105, 34, 0),
-        language="hi"
-    )
+        boxes = [
+            draw.textbbox((0, 0), line, font=font, language="hi", stroke_width=1)
+            for line in title_lines
+        ]
+        line_heights = [box[3] - box[1] for box in boxes]
+        gap = 2
+        total_height = sum(line_heights) + gap * (len(title_lines) - 1)
+        y = plaque[1] + (plaque[3] - plaque[1] - total_height) // 2
+        for line, box, line_height in zip(title_lines, boxes, line_heights):
+            line_width = box[2] - box[0]
+            x = plaque[0] + (plaque[2] - plaque[0] - line_width) // 2
+            draw.text(
+                (x, y - box[1]), line, font=font,
+                fill=(255, 218, 65), stroke_width=1,
+                stroke_fill=(105, 34, 0), language="hi"
+            )
+            y += line_height + gap
+    else:
+        # Keep the existing Shiv Puran title treatment unchanged.
+        plaque = (410, 480, 1248, 620)
+        draw.rounded_rectangle(
+            plaque, radius=17, fill=(2, 14, 35),
+            outline=(246, 190, 35), width=3
+        )
+        font = fit_font(
+            draw, title, font_path, max_width=800,
+            start_size=61, min_size=31
+        )
+        bbox = draw.textbbox(
+            (0, 0), title, font=font, language="hi", stroke_width=2
+        )
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        x = plaque[0] + (plaque[2] - plaque[0] - text_width) // 2
+        y = plaque[1] + (plaque[3] - plaque[1] - text_height) // 2 - bbox[1]
+        draw.text(
+            (x, y), title, font=font, fill=(255, 218, 65),
+            stroke_width=2, stroke_fill=(105, 34, 0), language="hi"
+        )
 
     # शिव पुराण के लिए footer बदलना
     if programme == "shivpuran":
