@@ -693,45 +693,57 @@ def create_thumbnail(
         config
     )
 
-    # Bhagavad Gita: opaque, enlarged two-tier title layout.
-    # Cover all legacy master-thumbnail lettering in this region first.
+    # Bhagavad Gita: three opaque, tightly stacked plaques.
+    # The chapter line contains ONLY chapter number and chapter name.
     if programme == "bhagavadgita":
         chapter_match = re.search(
             r"(?:अध्याय\\s*)?(\\d+)", str(lesson.get("title", ""))
         )
-        chapter_number = (
-            str(lesson.get("chapter") or chapter_match.group(1))
-            if chapter_match else str(lesson.get("chapter") or "")
+        chapter_number = str(
+            lesson.get("chapter") or (chapter_match.group(1) if chapter_match else "")
         )
         chapter_name = get_thumbnail_title(
             programme, lesson, lesson_index, config
         )
-        main_title = (
-            f"अध्याय {chapter_number} — {chapter_name}"
+        chapter_line = (
+            f"अध्याय {chapter_number}: {chapter_name}"
             if chapter_number else chapter_name
         )
 
-        # Solid opaque panels erase the old chapter text beneath them.
-        hook_plaque = (300, 438, 1248, 510)
-        draw.rounded_rectangle(
-            hook_plaque, radius=16, fill=(2, 14, 35),
-            outline=(246, 190, 35), width=3
-        )
+        # Keep the author's name plaque on the lower-left unobstructed.
+        # These three panels share identical edges and touch without gaps.
+        left, right = 450, 1248
+        panels = [
+            (left, 438, right, 512),
+            (left, 512, right, 590),
+            (left, 590, right, 668),
+        ]
+        panel_colors = [
+            (2, 14, 35),       # deep navy — tricky hook
+            (25, 12, 48),      # deep violet — chapter title
+            (20, 13, 12),      # deep brown — Bhagavad Gita footer
+        ]
+        for panel, color in zip(panels, panel_colors):
+            draw.rectangle(panel, fill=color)
+            draw.rectangle(
+                (panel[0] + 3, panel[1] + 3, panel[2] - 3, panel[3] - 3),
+                outline=(246, 190, 35), width=2
+            )
+
+        # 1) Tricky title — retained as approved.
         hook = "दैवी गुण अपनाएँ — आसुरी प्रवृत्तियों से बचें"
         hook_font = fit_font(
-            draw, hook, font_path, max_width=890,
-            start_size=39, min_size=30
+            draw, hook, font_path, max_width=760,
+            start_size=39, min_size=28
         )
         hook_box = draw.textbbox(
             (0, 0), hook, font=hook_font, language="hi", stroke_width=1
         )
         hook_width = hook_box[2] - hook_box[0]
         hook_height = hook_box[3] - hook_box[1]
-        hook_x = hook_plaque[0] + (
-            hook_plaque[2] - hook_plaque[0] - hook_width
-        ) // 2
-        hook_y = hook_plaque[1] + (
-            hook_plaque[3] - hook_plaque[1] - hook_height
+        hook_x = left + (right - left - hook_width) // 2
+        hook_y = panels[0][1] + (
+            panels[0][3] - panels[0][1] - hook_height
         ) // 2 - hook_box[1]
         draw.text(
             (hook_x, hook_y), hook, font=hook_font,
@@ -739,36 +751,53 @@ def create_thumbnail(
             stroke_fill=(15, 15, 15), language="hi"
         )
 
-        title_plaque = (260, 520, 1248, 638)
-        draw.rounded_rectangle(
-            title_plaque, radius=18, fill=(2, 14, 35),
-            outline=(246, 190, 35), width=4
-        )
-        draw.rounded_rectangle(
-            (270, 530, 1238, 628), radius=12,
-            outline=(125, 83, 22), width=2
-        )
+        # 2) Chapter title — one line only; no explanation or introduction.
+        # Match the compact title treatment of the existing Gita footer.
         title_font = fit_font(
-            draw, main_title, font_path, max_width=910,
-            start_size=62, min_size=39
+            draw, chapter_line, font_path, max_width=760,
+            start_size=42, min_size=30
         )
         title_box = draw.textbbox(
-            (0, 0), main_title, font=title_font,
+            (0, 0), chapter_line, font=title_font,
             language="hi", stroke_width=1
         )
         title_width = title_box[2] - title_box[0]
         title_height = title_box[3] - title_box[1]
-        title_x = title_plaque[0] + (
-            title_plaque[2] - title_plaque[0] - title_width
-        ) // 2
-        title_y = title_plaque[1] + (
-            title_plaque[3] - title_plaque[1] - title_height
+        title_x = left + (right - left - title_width) // 2
+        title_y = panels[1][1] + (
+            panels[1][3] - panels[1][1] - title_height
         ) // 2 - title_box[1]
         draw.text(
-            (title_x, title_y), main_title, font=title_font,
+            (title_x, title_y), chapter_line, font=title_font,
             fill=(255, 218, 65), stroke_width=1,
             stroke_fill=(105, 34, 0), language="hi"
         )
+
+        # 3) Book name — bottom panel, matching the same title scale.
+        footer = "श्रीमद्भगवद्गीता"
+        footer_font = fit_font(
+            draw, footer, font_path, max_width=760,
+            start_size=42, min_size=30
+        )
+        footer_box = draw.textbbox(
+            (0, 0), footer, font=footer_font,
+            language="hi", stroke_width=1
+        )
+        footer_width = footer_box[2] - footer_box[0]
+        footer_height = footer_box[3] - footer_box[1]
+        footer_x = left + (right - left - footer_width) // 2
+        footer_y = panels[2][1] + (
+            panels[2][3] - panels[2][1] - footer_height
+        ) // 2 - footer_box[1]
+        draw.text(
+            (footer_x, footer_y), footer, font=footer_font,
+            fill=(255, 218, 65), stroke_width=1,
+            stroke_fill=(65, 30, 0), language="hi"
+        )
+
+        # Remove the old stray "अध्याय" lettering left of the new stack,
+        # while leaving the author's name plaque below it intact.
+        draw.rectangle((135, 548, 298, 612), fill=(4, 20, 39))
     else:
         # Shiv Puran: three aligned layers. The hook uses the exact same
         # horizontal bounds as the chapter and book-name plaques.
