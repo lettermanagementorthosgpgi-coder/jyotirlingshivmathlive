@@ -298,6 +298,7 @@ def get_progress():
         log(
             f"GitHub progress पढ़ने में समस्या: {error}"
         )
+
     if os.path.exists(PROGRESS_FILE):
 
         try:
@@ -548,7 +549,6 @@ def get_thumbnail_title(programme, lesson, lesson_index, config=None):
 
     if programme == "bhagavadgita":
         # config entries use: अध्याय संख्या — संस्कृत नाम — हिन्दी अर्थ
-        # Use literal separators so the Sanskrit name is extracted exactly.
         parts = title.split(" — ", 2)
         if len(parts) == 1:
             parts = title.split(" – ", 2)
@@ -599,10 +599,11 @@ def get_thumbnail_title(programme, lesson, lesson_index, config=None):
 def get_gita_thumbnail_meaning(lesson):
     """Extract the Hindi explanation after the Sanskrit name in config.json."""
     title = str(lesson.get("title", "")).strip()
-    parts = title.split(" — ", 2)
-    if len(parts) == 1:
-        parts = title.split(" – ", 2)
-    return parts[2].strip() if len(parts) > 2 else ""
+    title = re.sub(
+        r"^(?:अध्याय\\s*)?\\d+\\s*[:：.\\-—–]?\\s*", "", title
+    ).strip()
+    parts = re.split(r"\\s*[—–]\\s*", title, maxsplit=2)
+    return parts[1].strip() if len(parts) > 1 else ""
 
 
 def split_balanced_devanagari(text):
@@ -900,7 +901,8 @@ def create_thumbnail(
         footer_banner = (410, 625, 1248, 686)
         draw.rounded_rectangle(
             footer_banner, radius=15,
-            fill=(20, 13, 12), outline=(246, 190, 35), width=3        )
+            fill=(20, 13, 12), outline=(246, 190, 35), width=3
+        )
         draw.rounded_rectangle(
             (418, 632, 1240, 679), radius=10,
             outline=(125, 83, 22), width=2
@@ -1199,3 +1201,774 @@ def verify_and_fix_tags(youtube, video_id, desired_tags):
 
     log("चेतावनी: 3 प्रयासों के बाद भी YouTube Tags सत्यापित नहीं हो सके।")
     return False
+
+
+# ============================================================
+# PLAYLIST ASSIGNMENT
+# ============================================================
+
+def ensure_playlist_assignment(
+    youtube,
+    playlist_id,
+    video_id
+):
+    if not playlist_id:
+        log("Playlist ID नहीं है; playlist assignment छोड़ा गया।")
+        return False
+
+    try:
+        response = youtube.playlistItems().list(
+            part="contentDetails",
+            playlistId=playlist_id,
+            videoId=video_id,
+            maxResults=5
+        ).execute()
+
+        if response.get("items"):
+            log("Video पहले से playlist में मौजूद है।")
+            return True
+
+        youtube.playlistItems().insert(
+            part="snippet",
+            body={
+                "snippet": {
+                    "playlistId": playlist_id,
+                    "resourceId": {
+                        "kind": "youtube#video",
+                        "videoId": video_id
+                    }
+                }
+            }
+        ).execute()
+
+        log("Video संबंधित YouTube playlist में जोड़ दिया गया।")
+        return True
+
+    except Exception as error:
+        log(f"Playlist assignment में समस्या: {error}")
+        return False
+
+
+
+# ============================================================
+# GEMINI SEO METADATA GENERATION
+# ============================================================
+
+def generate_youtube_metadata(programme, lesson, research_context=None):
+    """Generate high-quality metadata; never silently publish generic fallback."""
+    source_title = str(lesson.get("title", "धार्मिक प्रवचन")).strip()
+    programme_name = "शिव महापुराण" if programme == "shivpuran" else "श्रीमद्भगवद्गीता"
+    suffix = "|Mahant Rajesh Kumar Tiwari"
+    prompt = f'''
+आप एक वरिष्ठ हिंदी धार्मिक शोधकर्ता, YouTube SEO विशेषज्ञ और devotional content writer हैं।
+कार्यक्रम: {programme_name}
+आज का वास्तविक पाठ/प्रसंग: {source_title}
+YouTube पर इसी विषय की खोज से प्राप्त संदर्भ (केवल खोज-शब्द/प्रासंगिकता समझने हेतु; इन्हें शास्त्रीय प्रमाण न मानें):
+{json.dumps(research_context or [], ensure_ascii=False)}
+चैनल: {CHANNEL_NAME}
+प्रस्तुतकर्ता: {AUTHOR}
+वेबसाइट: {WEBSITE}
+
+इस खास प्रसंग पर आकर्षक, स्पष्ट और खोज में उपयोगी metadata लिखें। सामान्य/खाली वाक्य जैसे 'इस प्रसंग का आध्यात्मिक विवेचन सुनें' न लिखें।
+TITLE: प्रसंग के वास्तविक विषय को सीधे बताएँ। मुख्य खोज-शब्द शुरुआत में रखें। शीर्षक जिज्ञासा जगाए पर भ्रामक/सनसनीखेज न हो। 100 अक्षरों के भीतर रखें। अंत में ठीक यह suffix अनिवार्य है: |Mahant Rajesh Kumar Tiwari
+DESCRIPTION: कम से कम 180 और लगभग 300-450 शब्दों में स्वाभाविक, उपयोगी हिंदी विवरण दें। पहले 2 वाक्यों में इसी प्रसंग का सार और दर्शक को क्या जानने मिलेगा लिखें। फिर प्रसंग की पृष्ठभूमि/मुख्य घटनाक्रम को केवल दिए गए शीर्षक से समर्थित सीमा में समझाएँ; शास्त्रीय तथ्य न गढ़ें। फिर इस पाठ का महत्व, किस प्रकार के दर्शक के लिए उपयोगी है, और अंत में चैनल परिचय व subscribe अनुरोध दें। Keyword stuffing न करें।
+TAGS: 18-25 वास्तविक खोज वाक्यांश दें; Hindi और English दोनों में, विषय-विशिष्ट; generic tags कम रखें; # न लगाएँ।
+HASHTAGS: 4-6 प्रासंगिक hashtags दें।
+केवल valid JSON लौटाएँ: {{"title":"...","description":"...","tags":["..."],"hashtags":["#..."]}}
+'''
+    def extract_text(result):
+        box = result.get("result", result) if isinstance(result, dict) else {}
+        if isinstance(box, dict):
+            for key in ("response", "text", "output_text", "content"):
+                value = box.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            choices = box.get("choices") or result.get("choices") or []
+            if choices:
+                message = choices[0].get("message", {})
+                value = message.get("content") or choices[0].get("text")
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        raise ValueError("AI response में text नहीं मिला: " + json.dumps(result, ensure_ascii=False)[:700])
+    def normalise(data, provider):
+        title = str(data.get("title", "")).strip()
+        title = re.sub(r"\s*\|\s*Mahant Rajesh Kumar Tiwari\s*$", "", title, flags=re.I).strip()
+        if not title:
+            raise ValueError("AI ने title नहीं दिया")
+        # पूरे शब्दों को सुरक्षित रखते हुए suffix सहित 100 अक्षरों में रखें।
+        max_prefix = 100 - len(suffix) - 1
+        if len(title) > max_prefix:
+            words = title.split()
+            kept = []
+            for word in words:
+                candidate = " ".join(kept + [word])
+                if len(candidate) > max_prefix:
+                    break
+                kept.append(word)
+            title = " ".join(kept).rstrip(" -|:।")
+        if not title:
+            raise ValueError("SEO title suffix से पहले खाली हो गया")
+        title = title + " " + suffix
+        if not title.endswith(suffix) or len(title) > 100:
+            raise ValueError("Title suffix/length validation failed")
+        description = str(data.get("description", "")).strip()
+        if len(description) < 500:
+            raise ValueError(f"Description बहुत छोटा है ({len(description)} characters); दोबारा प्रयास आवश्यक")
+        raw_tags = data.get("tags", [])
+        if not isinstance(raw_tags, list):
+            raise ValueError("AI tags सूची के रूप में नहीं मिले")
+        hashtags = [str(x).strip() if str(x).strip().startswith("#") else "#" + str(x).strip().replace(" ", "") for x in data.get("hashtags", []) if str(x).strip()]
+        if len(raw_tags) < 12:
+            raise ValueError("AI ने पर्याप्त विषय-विशिष्ट tags नहीं दिए")
+        # YouTube tags को plain text, unique और conservative कुल सीमा में रखें।
+        clean_tags = []
+        seen_tags = set()
+        total = 0
+        for item in raw_tags:
+            tag = re.sub(r"[\x00-\x1f\x7f]", " ", str(item))
+            tag = re.sub(r"\s+", " ", tag).strip().lstrip("#").strip()
+            tag = tag.replace(",", " ").strip()
+            if not tag:
+                continue
+            key = tag.casefold()
+            if key in seen_tags:
+                continue
+            size = len(tag) + (1 if clean_tags else 0)
+            if total + size > 450:
+                continue
+            clean_tags.append(tag)
+            seen_tags.add(key)
+            total += size
+            if len(clean_tags) >= 20:
+                break
+        if len(clean_tags) < 12:
+            raise ValueError(f"साफ़ करने के बाद केवल {len(clean_tags)} valid tags बचे")
+        if len(hashtags) < 3:
+            raise ValueError("AI ने पर्याप्त hashtags नहीं दिए")
+        description += "\n\n" + " ".join(list(dict.fromkeys(hashtags))[:6])
+        description += f"\n\nप्रस्तुति: {AUTHOR}\n{CHANNEL_NAME}\n{WEBSITE}\n{CHANNEL_URL}"
+        log(f"{provider}: metadata तैयार; title={title!r}, description={len(description)} chars, tags={len(clean_tags)}")
+        return title, description, clean_tags
+    # 1) Cloudflare Workers AI
+    cf_token = os.environ.get("CLOUDFLARE_API_TOKEN")
+    cf_account = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
+    if cf_token and cf_account:
+        try:
+            model = os.environ.get("CLOUDFLARE_TEXT_MODEL", "@cf/openai/gpt-oss-120b")
+            endpoint = f"https://api.cloudflare.com/client/v4/accounts/{cf_account}/ai/run/{model}"
+            payload = {"messages":[{"role":"system","content":"You are an expert Hindi SEO editor. Return only JSON."},{"role":"user","content":prompt}],"max_tokens":2400,"temperature":0.5}
+            request = urllib.request.Request(endpoint,data=json.dumps(payload,ensure_ascii=False).encode("utf-8"),headers={"Authorization":f"Bearer {cf_token}","Content-Type":"application/json"},method="POST")
+            with urllib.request.urlopen(request,timeout=150) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            raw = extract_text(result)
+            raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.I)
+            return normalise(json.loads(raw), "Cloudflare Workers AI " + model)
+        except Exception as error:
+            log(f"Cloudflare AI असफल; अब GPT: {error}")
+    else:
+        log("Cloudflare credentials अनुपलब्ध; GPT fallback")
+    # 2) OpenAI GPT
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if openai_key:
+        try:
+            model = os.environ.get("OPENAI_TEXT_MODEL", OPENAI_MODEL)
+            payload = {"model":model,"messages":[{"role":"system","content":"Return only valid JSON. You are an expert Hindi YouTube SEO researcher."},{"role":"user","content":prompt}],"response_format":{"type":"json_object"},"temperature":0.5,"max_completion_tokens":2400}
+            request = urllib.request.Request("https://api.openai.com/v1/chat/completions",data=json.dumps(payload,ensure_ascii=False).encode("utf-8"),headers={"Authorization":f"Bearer {openai_key}","Content-Type":"application/json"},method="POST")
+            with urllib.request.urlopen(request,timeout=150) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            raw = result["choices"][0]["message"]["content"]
+            return normalise(json.loads(raw), "OpenAI GPT " + model)
+        except Exception as error:
+            log(f"GPT असफल; अब Gemini: {error}")
+    else:
+        log("OPENAI_API_KEY अनुपलब्ध; Gemini fallback")
+    # 3) Gemini — current stable model; 2.5 Flash is not used as default
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    if gemini_key:
+        try:
+            model = os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
+            endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
+            payload = {"contents":[{"parts":[{"text":prompt}]}],"generationConfig":{"temperature":0.5,"responseMimeType":"application/json","maxOutputTokens":2400}}
+            request = urllib.request.Request(endpoint,data=json.dumps(payload,ensure_ascii=False).encode("utf-8"),headers={"Content-Type":"application/json"},method="POST")
+            with urllib.request.urlopen(request,timeout=150) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            raw = result["candidates"][0]["content"]["parts"][0]["text"]
+            return normalise(json.loads(raw), "Gemini " + model)
+        except Exception as error:
+            log(f"Gemini भी असफल: {error}")
+    raise RuntimeError("तीनों AI से मान्य metadata नहीं मिला; सुरक्षा के लिए Broadcast नहीं बनाया जाएगा।")
+
+# ============================================================
+# CREATE NEW BROADCAST
+# ============================================================
+
+def get_retry_target(now):
+    """Return (programme, scheduled datetime, deadline) only inside its preparation window."""
+    morning_start = now.replace(hour=19, minute=0, second=0, microsecond=0)
+    morning_end_today = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    evening_start = now.replace(hour=8, minute=0, second=0, microsecond=0)
+    evening_end = now.replace(hour=18, minute=0, second=0, microsecond=0)
+
+    if now >= morning_start:
+        target_date = (now + timedelta(days=1)).date()
+        scheduled = datetime.combine(target_date, datetime.min.time(), tzinfo=TIMEZONE).replace(hour=7)
+        deadline = scheduled.replace(hour=6)
+        return "shivpuran", scheduled, deadline
+    if now <= morning_end_today:
+        scheduled = now.replace(hour=7, minute=0, second=0, microsecond=0)
+        deadline = now.replace(hour=6, minute=0, second=0, microsecond=0)
+        return "shivpuran", scheduled, deadline
+    if evening_start <= now <= evening_end:
+        scheduled = now.replace(hour=19, minute=0, second=0, microsecond=0)
+        deadline = evening_end
+        return "bhagavadgita", scheduled, deadline
+    return None, None, None
+
+
+def safe_fallback_metadata(programme, lesson):
+    programme_name = "शिव महापुराण" if programme == "shivpuran" else "श्रीमद्भगवद्गीता"
+    suffix = "|Mahant Rajesh Kumar Tiwari"
+    base = str(lesson.get("title", programme_name)).strip()
+    max_prefix = 100 - len(suffix) - 1
+    words = []
+    for word in base.split():
+        candidate = " ".join(words + [word])
+        if len(candidate) > max_prefix:
+            break
+        words.append(word)
+    title = (" ".join(words) or programme_name) + " " + suffix
+    description = (
+        f"{programme_name} का आज का पाठ: {lesson.get('title', '')}. "
+        f"इस धार्मिक पाठ में दिए गए प्रसंग का वाचन एवं व्याख्या प्रस्तुत की जाएगी। "
+        f"प्रस्तुति: {AUTHOR}\n{CHANNEL_NAME}\n{WEBSITE}\n{CHANNEL_URL}"
+    )
+    tags = ["शिव पुराण" if programme == "shivpuran" else "भगवद्गीता",
+            "Jyotirling Shivmath", "Mahant Rajesh Kumar Tiwari",
+            "धार्मिक कथा", "सनातन धर्म"]
+    return title, description, tags
+
+
+def prepare_retry_run(config, progress, progress_sha, youtube, programme_override=None):
+    now = datetime.now(TIMEZONE)
+    if programme_override:
+        if programme_override not in ("shivpuran", "bhagavadgita"):
+            fail("PROGRAMME केवल shivpuran या bhagavadgita हो सकता है।")
+        programme = programme_override
+        selected_slot = get_slot(config, programme)
+        scheduled_time = get_scheduled_time(selected_slot)
+        deadline = scheduled_time - timedelta(hours=1)
+        log(f"Manual programme selection honoured: {programme}")
+    else:
+        programme, scheduled_time, deadline = get_retry_target(now)
+        if not programme:
+            log("अभी किसी कार्यक्रम की preparation window नहीं है; कोई काम नहीं किया जाएगा।")
+            return
+
+    date_string = scheduled_time.strftime("%Y-%m-%d")
+    saved = get_saved_broadcast(progress, programme, date_string)
+    if saved:
+        log(f"{programme} के लिए {date_string} का Broadcast पहले से दर्ज है; retry छोड़ा गया।")
+        return
+
+    slot = get_slot(config, programme)
+    lesson_index, lesson = get_next_lesson(programme, config, progress)
+    pending_all = progress.setdefault("pending_preparation", {})
+    pending = pending_all.get(programme, {})
+    if pending.get("date") != date_string or pending.get("lesson") != lesson["title"]:
+        pending = {
+            "date": date_string,
+            "lesson": lesson["title"],
+            "research": None,
+            "metadata": None,
+            "thumbnail_asset": None
+        }
+        pending_all[programme] = pending
+        save_progress(progress, progress_sha)
+
+    log(f"Retry programme: {programme}; target: {scheduled_time.isoformat()}; lesson: {lesson['title']}")
+
+    if not pending.get("research"):
+        try:
+            pending["research"] = research_youtube_topic(youtube, programme, lesson)
+            save_progress(progress, None)
+            log("YouTube topic research सुरक्षित हो गया।")
+        except Exception as error:
+            log(f"YouTube topic research अभी असफल; अगली retry में पुनः प्रयास होगा: {error}")
+
+    if not pending.get("metadata") and pending.get("research"):
+        try:
+            title, description, tags = generate_youtube_metadata(
+                programme, lesson, pending.get("research")
+            )
+            pending["metadata"] = {
+                "title": title,
+                "description": description,
+                "tags": tags
+            }
+            save_progress(progress, None)
+            log("SEO title, description और tags तैयार होकर सुरक्षित हो गए।")
+        except Exception as error:
+            log(f"SEO metadata पैकेज (title/description/tags) अभी तैयार नहीं; अगली retry में केवल यही पैकेज दोबारा बनेगा: {error}")
+
+    if not pending.get("thumbnail_asset"):
+        try:
+            master_path = find_master_thumbnail(config)
+            thumbnail_path = create_thumbnail(
+                master_path, programme, lesson, lesson_index, config
+            )
+            asset_path = f"retry_assets/{programme}_{date_string}.jpg"
+            github_upload_binary(asset_path, thumbnail_path)
+            pending["thumbnail_asset"] = asset_path
+            save_progress(progress, None)
+            log("Thumbnail तैयार और retry के लिए सुरक्षित हो गया।")
+        except Exception as error:
+            log(f"Thumbnail अभी तैयार नहीं; अगली retry में केवल thumbnail दोबारा बनेगा: {error}")
+
+    metadata_ready = bool(pending.get("metadata"))
+    thumbnail_ready = bool(pending.get("thumbnail_asset"))
+    ready = metadata_ready and thumbnail_ready
+    at_deadline = now >= deadline
+    if not ready and not at_deadline:
+        missing = []
+        if not metadata_ready:
+            missing.extend(["SEO title", "description", "tags"])
+        if not thumbnail_ready:
+            missing.append("thumbnail")
+        log("अभी केवल ये सामग्री शेष है: " + ", ".join(missing) + "। अगली retry तक Broadcast नहीं बनेगा।")
+        return
+
+    if ready:
+        metadata = pending["metadata"]
+        github_download_binary(pending["thumbnail_asset"], THUMBNAIL_OUTPUT)
+        log("चारों सामग्री तैयार हैं; निर्धारित समय का Broadcast बनाया जाएगा।")
+    else:
+        log("Preparation deadline आ गई; उपलब्ध सामग्री सुरक्षित रखते हुए केवल अनुपलब्ध सामग्री fallback से भरी जाएगी।")
+        fallback_title, fallback_description, fallback_tags = safe_fallback_metadata(programme, lesson)
+        saved_metadata = pending.get("metadata") or {}
+        metadata = {
+            "title": saved_metadata.get("title") or fallback_title,
+            "description": saved_metadata.get("description") or fallback_description,
+            "tags": saved_metadata.get("tags") or fallback_tags
+        }
+        if thumbnail_ready:
+            github_download_binary(pending["thumbnail_asset"], THUMBNAIL_OUTPUT)
+        else:
+            master_path = find_master_thumbnail(config)
+            fallback_image = Image.open(master_path).convert("RGB")
+            fallback_image = ImageOps.fit(fallback_image, (1280, 720), method=Image.Resampling.LANCZOS)
+            fallback_image.save(THUMBNAIL_OUTPUT, "JPEG", quality=94, optimize=True)
+
+    broadcast_id = create_broadcast(
+        youtube=youtube,
+        slot=slot,
+        lesson=lesson,
+        lesson_index=lesson_index,
+        scheduled_time=scheduled_time,
+        config=config,
+        progress=progress,
+        progress_sha=None,
+        prepared_metadata=metadata,
+        prepared_thumbnail_path=THUMBNAIL_OUTPUT
+    )
+    pending_all.pop(programme, None)
+    save_progress(progress, None)
+    log(f"Retry scheduling पूरा: {broadcast_id}")
+
+
+def create_broadcast(
+    youtube,
+    slot,
+    lesson,
+    lesson_index,
+    scheduled_time,
+    config,
+    progress,
+    progress_sha,
+    prepared_metadata=None,
+    prepared_thumbnail_path=None
+):
+    programme = slot["key"]
+    date_string = scheduled_time.strftime("%Y-%m-%d")
+
+    # पहले से saved ID हो तो नया broadcast न बनाएँ।
+    saved = get_saved_broadcast(
+        progress,
+        programme,
+        date_string
+    )
+
+    if saved:
+        saved_id = (
+            saved.get("id")
+            if isinstance(saved, dict)
+            else saved
+        )
+
+        existing = get_broadcast_by_id(
+            youtube,
+            saved_id
+        )
+
+        if existing:
+            log(
+                "इस तारीख का Broadcast पहले से मौजूद है। "
+                "नया Broadcast नहीं बनाया जाएगा।"
+            )
+            return saved_id
+
+    # उसी समय का broadcast पहले से मौजूद हो तो duplicate न बनाएँ।
+    existing = find_existing_broadcast(
+        youtube,
+        scheduled_time
+    )
+
+    if existing:
+        broadcast_id = existing["id"]
+
+        log(
+            "इसी समय का Broadcast पहले से मौजूद है: "
+            + broadcast_id
+        )
+
+        save_broadcast_record(
+            progress,
+            programme,
+            date_string,
+            broadcast_id,
+            lesson["title"],
+            scheduled_time
+        )
+
+        save_progress(progress, progress_sha)
+        return broadcast_id
+            # --------------------------------------------------------
+    # नया YouTube Broadcast तैयार करें
+    # --------------------------------------------------------
+
+    # हर lesson के लिए Gemini से SEO title, description और tags बनाएं।
+    if prepared_metadata:
+        title = prepared_metadata["title"]
+        description = prepared_metadata["description"]
+        tags = prepared_metadata["tags"]
+    else:
+        title, description, tags = generate_youtube_metadata(programme, lesson)
+
+    privacy_status = slot.get(
+        "privacyStatus",
+        "public"
+    )
+
+    body = {
+        "snippet": {
+            "title": title,
+            "description": description,
+            "scheduledStartTime": scheduled_time.isoformat(),
+            "tags": tags,
+            "categoryId": "22"
+        },
+        "status": {
+            "privacyStatus": privacy_status,
+            "selfDeclaredMadeForKids": False
+        },
+        "contentDetails": {
+            "enableAutoStart": False,
+            "enableAutoStop": False,
+            "enableDvr": True,
+            "recordFromStart": True,
+            "enableEmbed": True
+        }
+    }
+
+    response = youtube.liveBroadcasts().insert(
+        part="snippet,status,contentDetails",
+        body=body
+    ).execute()
+
+    broadcast_id = response["id"]
+
+    log("नया YouTube Broadcast बनाया गया।")
+    log(f"Broadcast ID: {broadcast_id}")
+
+    # --------------------------------------------------------
+    # Broadcast progress सुरक्षित करें
+    # --------------------------------------------------------
+
+    save_broadcast_record(
+        progress,
+        programme,
+        date_string,
+        broadcast_id,
+        lesson["title"],
+        scheduled_time
+    )
+
+    save_progress(progress, progress_sha)
+
+    # --------------------------------------------------------
+    # Thumbnail तैयार करके upload करें
+    # --------------------------------------------------------
+
+    try:
+        thumbnail_path = prepared_thumbnail_path
+        if not thumbnail_path:
+            master_path = find_master_thumbnail(config)
+            thumbnail_path = create_thumbnail(
+                master_path=master_path,
+                programme=programme,
+                lesson=lesson,
+                lesson_index=lesson_index,
+                config=config
+            )
+        upload_thumbnail(youtube, broadcast_id, thumbnail_path)
+
+    except Exception as error:
+        log(
+            "Thumbnail बनाने या upload करने में समस्या आई। "
+            "Broadcast सुरक्षित है और प्रक्रिया जारी रहेगी। "
+            f"विवरण: {error}"
+        )
+
+    # --------------------------------------------------------
+    # Tags और Playlist की जाँच
+    # --------------------------------------------------------
+
+    verify_and_fix_tags(
+        youtube,
+        broadcast_id,
+        tags
+    )
+
+    playlist_id = slot.get("playlist_id")
+
+    ensure_playlist_assignment(
+        youtube,
+        playlist_id,
+        broadcast_id
+    )
+
+    # --------------------------------------------------------
+    # अगला Lesson सुरक्षित करें
+    # --------------------------------------------------------
+
+    advance_progress(
+        programme,
+        lesson_index,
+        config,
+        progress
+    )
+
+    save_progress(progress, progress_sha)
+
+    log("Broadcast creation प्रक्रिया पूरी हुई।")
+
+    return broadcast_id
+
+
+# ============================================================
+# YOUTUBE AUTHENTICATION
+# ============================================================
+
+def get_youtube_service():
+    token_json = os.environ.get("YOUTUBE_TOKEN_JSON")
+
+    if not token_json:
+        fail("YOUTUBE_TOKEN_JSON GitHub Secret उपलब्ध नहीं है।")
+
+    try:
+        token_data = json.loads(token_json)
+
+        credentials = Credentials.from_authorized_user_info(
+            token_data,
+            SCOPES
+        )
+
+        return build(
+            "youtube",
+            "v3",
+            credentials=credentials,
+            cache_discovery=False
+        )
+
+    except Exception as error:
+        fail(f"YouTube authentication विफल: {error}")
+
+
+# ============================================================
+# SCHEDULED TIME
+# ============================================================
+
+def get_scheduled_time(slot):
+    """Use the hour/minute fields already stored in config.json."""
+    now = datetime.now(TIMEZONE)
+    try:
+        hour = int(slot["hour"])
+        minute = int(slot["minute"])
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError("hour/minute out of range")
+    except (KeyError, TypeError, ValueError) as error:
+        fail(f"Schedule में hour/minute गलत हैं: {error}")
+
+    scheduled = now.replace(
+        hour=hour, minute=minute, second=0, microsecond=0
+    )
+    if scheduled <= now:
+        scheduled += timedelta(days=1)
+    return scheduled
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+    log("YouTube Live Scheduler शुरू हो रहा है।")
+
+    config = load_config()
+
+    progress, progress_sha = get_progress()
+
+    action = os.environ.get(
+        "ACTION",
+        "create"
+    ).strip().lower()
+
+    programme = os.environ.get(
+        "PROGRAMME",
+        ""
+    ).strip().lower()
+
+    # सुरक्षित metadata test: YouTube API/Broadcast/progress में कोई बदलाव नहीं।
+    if action == "test_metadata":
+        if programme not in ("shivpuran", "bhagavadgita"):
+            fail("test_metadata के लिए PROGRAMME चुनें।")
+        lesson_index, lesson = get_next_lesson(programme, config, progress)
+        log(f"Metadata test lesson: {lesson['title']}")
+        title, description, tags = generate_youtube_metadata(programme, lesson)
+        log("===== GENERATED TITLE =====")
+        log(title)
+        log("===== GENERATED DESCRIPTION =====")
+        log(description)
+        log("===== GENERATED TAGS =====")
+        log(json.dumps(tags, ensure_ascii=False))
+        log("Metadata test पूरा; कोई Broadcast या progress बदलाव नहीं हुआ।")
+        return
+
+    # सुरक्षित इमेज टेस्ट: YouTube API, Broadcast और progress में कोई बदलाव नहीं।
+    if action == "test_image":
+        if programme not in ("shivpuran", "bhagavadgita"):
+            fail("test_image के लिए PROGRAMME shivpuran या bhagavadgita चुनें।")
+        slot = get_slot(config, programme)
+        lesson_index, lesson = get_next_lesson(programme, config, progress)
+        master_path = find_master_thumbnail(config)
+        output_path = create_thumbnail(
+            master_path, programme, lesson, lesson_index, config
+        )
+        log(f"सुरक्षित thumbnail test पूरा: {output_path}")
+        log("कोई YouTube Broadcast नहीं बनाया गया और progress नहीं बदली गई।")
+        return
+
+    youtube = get_youtube_service()
+
+    if action == "prepare_retry":
+        prepare_retry_run(config, progress, progress_sha, youtube, programme or None)
+        return
+
+    # --------------------------------------------------------
+    # पुराना Broadcast का समय बदलना
+    # --------------------------------------------------------
+
+    if action == "update_time":
+        broadcast_id = os.environ.get(
+            "BROADCAST_ID",
+            ""
+        ).strip()
+
+        date_text = os.environ.get("BROADCAST_DATE", "").strip()
+        actual_time = os.environ.get("ACTUAL_TIME", "").strip()
+
+        if not broadcast_id:
+            fail("BROADCAST_ID उपलब्ध नहीं है।")
+        if not date_text or not actual_time:
+            fail("BROADCAST_DATE और ACTUAL_TIME दोनों आवश्यक हैं।")
+
+        new_time = parse_date_time(date_text, actual_time)
+
+        update_existing_broadcast_time(
+            youtube,
+            broadcast_id,
+            new_time
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # Programme निर्धारित करें
+    # --------------------------------------------------------
+
+    if not programme:
+        current_time = datetime.now(TIMEZONE)
+
+        if current_time.hour < 13:
+            programme = "shivpuran"
+        else:
+            programme = "bhagavadgita"
+
+    slot = get_slot(
+        config,
+        programme
+    )
+
+    # --------------------------------------------------------
+    # अगला Lesson चुनें
+    # --------------------------------------------------------
+
+    lesson_index, lesson = get_next_lesson(
+        programme,
+        config,
+        progress
+    )
+
+    scheduled_time = get_scheduled_time(slot)
+
+    log(f"Programme: {programme}")
+    log(f"Lesson: {lesson['title']}")
+    log(
+        "Scheduled time: "
+        + scheduled_time.strftime("%d-%m-%Y %I:%M %p")
+    )
+
+    # --------------------------------------------------------
+    # Broadcast बनाएँ
+    # --------------------------------------------------------
+
+    broadcast_id = create_broadcast(
+        youtube=youtube,
+        slot=slot,
+        lesson=lesson,
+        lesson_index=lesson_index,
+        scheduled_time=scheduled_time,
+        config=config,
+        progress=progress,
+        progress_sha=progress_sha
+    )
+
+    log("कार्य पूरा हुआ।")
+    log(f"YouTube Broadcast ID: {broadcast_id}")
+
+    log(
+        "Live अपने मोबाइल से manually शुरू करें। "
+        "Scheduler अपने आप Live शुरू नहीं करेगा।"
+    )
+
+
+# ============================================================
+# SCRIPT ENTRY POINT
+# ============================================================
+
+if __name__ == "__main__":
+    try:
+        main()
+
+    except Exception as error:
+        log(f"Scheduler में गंभीर त्रुटि: {error}")
+        raise
