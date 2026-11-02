@@ -693,73 +693,82 @@ def create_thumbnail(
         config
     )
 
-    # Bhagavad Gita title and meaning layout.
+    # Bhagavad Gita: opaque, enlarged two-tier title layout.
+    # Cover all legacy master-thumbnail lettering in this region first.
     if programme == "bhagavadgita":
-        meaning = get_gita_thumbnail_meaning(lesson)
-        if meaning:
-            meaning_font = fit_font(
-                draw, meaning, font_path, max_width=820,
-                start_size=35, min_size=23
-            )
-            meaning_box = draw.textbbox(
-                (0, 0), meaning, font=meaning_font,
-                language="hi", stroke_width=1
-            )
-            meaning_width = meaning_box[2] - meaning_box[0]
-            meaning_x = (1280 - meaning_width) // 2
-            meaning_y = 494 - meaning_box[1]
-            draw.text(
-                (meaning_x, meaning_y), meaning,
-                font=meaning_font, fill=(255, 245, 210),
-                stroke_width=1, stroke_fill=(55, 25, 0),
-                language="hi"
-            )
+        chapter_match = re.search(
+            r"(?:अध्याय\\s*)?(\\d+)", str(lesson.get("title", ""))
+        )
+        chapter_number = (
+            str(lesson.get("chapter") or chapter_match.group(1))
+            if chapter_match else str(lesson.get("chapter") or "")
+        )
+        chapter_name = get_thumbnail_title(
+            programme, lesson, lesson_index, config
+        )
+        main_title = (
+            f"अध्याय {chapter_number} — {chapter_name}"
+            if chapter_number else chapter_name
+        )
 
-        # Match the lower scripture-name banner's 838 x 61 px dimensions.
-        plaque = (410, 550, 1248, 611)
+        # Solid opaque panels erase the old chapter text beneath them.
+        hook_plaque = (300, 438, 1248, 510)
         draw.rounded_rectangle(
-            plaque, radius=15, fill=(2, 14, 35),
+            hook_plaque, radius=16, fill=(2, 14, 35),
             outline=(246, 190, 35), width=3
         )
-        font = fit_font(
-            draw, title, font_path, max_width=790,
-            start_size=48, min_size=29
+        hook = "दैवी गुण अपनाएँ — आसुरी प्रवृत्तियों से बचें"
+        hook_font = fit_font(
+            draw, hook, font_path, max_width=890,
+            start_size=39, min_size=30
         )
-        title_lines = [title]
-        title_box = draw.textbbox(
-            (0, 0), title, font=font, language="hi", stroke_width=1
+        hook_box = draw.textbbox(
+            (0, 0), hook, font=hook_font, language="hi", stroke_width=1
         )
-        if title_box[2] - title_box[0] > 790:
-            title_lines = split_balanced_devanagari(title)
-            font = fit_font(
-                draw, max(title_lines, key=len), font_path,
-                max_width=790, start_size=36, min_size=25
-            )
-            # Give the two-line fallback enough vertical room while retaining
-            # the same banner width and visual style.
-            plaque = (410, 536, 1248, 625)
-            draw.rounded_rectangle(
-                plaque, radius=15, fill=(2, 14, 35),
-                outline=(246, 190, 35), width=3
-            )
+        hook_width = hook_box[2] - hook_box[0]
+        hook_height = hook_box[3] - hook_box[1]
+        hook_x = hook_plaque[0] + (
+            hook_plaque[2] - hook_plaque[0] - hook_width
+        ) // 2
+        hook_y = hook_plaque[1] + (
+            hook_plaque[3] - hook_plaque[1] - hook_height
+        ) // 2 - hook_box[1]
+        draw.text(
+            (hook_x, hook_y), hook, font=hook_font,
+            fill=(255, 255, 255), stroke_width=1,
+            stroke_fill=(15, 15, 15), language="hi"
+        )
 
-        boxes = [
-            draw.textbbox((0, 0), line, font=font, language="hi", stroke_width=1)
-            for line in title_lines
-        ]
-        line_heights = [box[3] - box[1] for box in boxes]
-        gap = 2
-        total_height = sum(line_heights) + gap * (len(title_lines) - 1)
-        y = plaque[1] + (plaque[3] - plaque[1] - total_height) // 2
-        for line, box, line_height in zip(title_lines, boxes, line_heights):
-            line_width = box[2] - box[0]
-            x = plaque[0] + (plaque[2] - plaque[0] - line_width) // 2
-            draw.text(
-                (x, y - box[1]), line, font=font,
-                fill=(255, 218, 65), stroke_width=1,
-                stroke_fill=(105, 34, 0), language="hi"
-            )
-            y += line_height + gap
+        title_plaque = (260, 520, 1248, 638)
+        draw.rounded_rectangle(
+            title_plaque, radius=18, fill=(2, 14, 35),
+            outline=(246, 190, 35), width=4
+        )
+        draw.rounded_rectangle(
+            (270, 530, 1238, 628), radius=12,
+            outline=(125, 83, 22), width=2
+        )
+        title_font = fit_font(
+            draw, main_title, font_path, max_width=910,
+            start_size=62, min_size=39
+        )
+        title_box = draw.textbbox(
+            (0, 0), main_title, font=title_font,
+            language="hi", stroke_width=1
+        )
+        title_width = title_box[2] - title_box[0]
+        title_height = title_box[3] - title_box[1]
+        title_x = title_plaque[0] + (
+            title_plaque[2] - title_plaque[0] - title_width
+        ) // 2
+        title_y = title_plaque[1] + (
+            title_plaque[3] - title_plaque[1] - title_height
+        ) // 2 - title_box[1]
+        draw.text(
+            (title_x, title_y), main_title, font=title_font,
+            fill=(255, 218, 65), stroke_width=1,
+            stroke_fill=(105, 34, 0), language="hi"
+        )
     else:
         # Shiv Puran: three aligned layers. The hook uses the exact same
         # horizontal bounds as the chapter and book-name plaques.
