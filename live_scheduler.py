@@ -613,6 +613,25 @@ def split_balanced_devanagari(text):
         candidates.append((abs(len(left) - len(right)), [left, right]))
     return min(candidates, key=lambda item: item[0])[1]
 
+
+def wrap_text_to_width(draw, text, font, max_width):
+    """Wrap Hindi text at word boundaries so every line stays inside its plaque."""
+    words = str(text).split()
+    if not words:
+        return [""]
+    lines = []
+    current = words[0]
+    for word in words[1:]:
+        candidate = current + " " + word
+        box = draw.textbbox((0, 0), candidate, font=font, language="hi", stroke_width=1)
+        if box[2] - box[0] <= max_width:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
 def create_thumbnail(
     master_path,
     programme,
@@ -742,33 +761,72 @@ def create_thumbnail(
             )
             y += line_height + gap
     else:
-        # Shiv Puran: hook on top, section/chapter plaque in the middle.
+        # Shiv Puran: three aligned layers. The hook uses the exact same
+        # horizontal bounds as the chapter and book-name plaques.
         lesson_title = str(lesson.get("title", "")).strip()
         if "श्रीहरि और वीरभद्र का युद्ध" in lesson_title:
             topic_hook = "जब वीरभद्र ने रोक दिया श्रीहरि का सुदर्शन चक्र!"
         else:
             topic_hook = re.sub(
-                r"^.*?\s-\s*", "", lesson_title, count=1
+                r"^.*?\\s-\\s*", "", lesson_title, count=1
             ).strip() or lesson_title
 
-        hook_font = fit_font(
-            draw, topic_hook, font_path, max_width=820,
-            start_size=38, min_size=23
+        # Clear the complete hook area with an opaque plaque before drawing.
+        # This removes any older master-image text that could show underneath.
+        hook_plaque = (410, 448, 1248, 540)
+        draw.rounded_rectangle(
+            hook_plaque, radius=15, fill=(2, 14, 35),
+            outline=(246, 190, 35), width=3
         )
-        hook_box = draw.textbbox(
-            (0, 0), topic_hook, font=hook_font,
-            language="hi", stroke_width=1
-        )
-        hook_width = hook_box[2] - hook_box[0]
-        hook_x = (1280 - hook_width) // 2
-        hook_y = 493 - hook_box[1]
-        draw.text(
-            (hook_x, hook_y), topic_hook, font=hook_font,
-            fill=(255, 245, 210), stroke_width=1,
-            stroke_fill=(55, 25, 0), language="hi"
+        draw.rounded_rectangle(
+            (418, 455, 1240, 533), radius=10,
+            outline=(125, 83, 22), width=2
         )
 
-        # Match the Bhagavad Gita chapter plaque dimensions and styling.
+        hook_font = fit_font(
+            draw, topic_hook, font_path, max_width=790,
+            start_size=32, min_size=20
+        )
+        hook_lines = wrap_text_to_width(
+            draw, topic_hook, hook_font, max_width=790
+        )
+        # If a long subject wraps to many lines, reduce font size until it
+        # fits the fixed two-line-height area (or the smallest readable size).
+        while len(hook_lines) > 2 and hook_font.size > 20:
+            hook_font = ImageFont.truetype(
+                font_path, size=hook_font.size - 2,
+                layout_engine=ImageFont.Layout.RAQM
+            )
+            hook_lines = wrap_text_to_width(
+                draw, topic_hook, hook_font, max_width=790
+            )
+
+        hook_boxes = [
+            draw.textbbox((0, 0), line, font=hook_font,
+                          language="hi", stroke_width=1)
+            for line in hook_lines
+        ]
+        hook_heights = [box[3] - box[1] for box in hook_boxes]
+        hook_gap = 1
+        hook_total_height = sum(hook_heights) + hook_gap * (len(hook_lines) - 1)
+        hook_y = hook_plaque[1] + (
+            hook_plaque[3] - hook_plaque[1] - hook_total_height
+        ) // 2
+        for line, box, line_height in zip(
+            hook_lines, hook_boxes, hook_heights
+        ):
+            line_width = box[2] - box[0]
+            hook_x = hook_plaque[0] + (
+                hook_plaque[2] - hook_plaque[0] - line_width
+            ) // 2
+            draw.text(
+                (hook_x, hook_y - box[1]), line, font=hook_font,
+                fill=(255, 255, 255), stroke_width=1,
+                stroke_fill=(15, 15, 15), language="hi"
+            )
+            hook_y += line_height + hook_gap
+
+        # Middle layer: original chapter/section name, same width as book plaque.
         plaque = (410, 550, 1248, 611)
         draw.rounded_rectangle(
             plaque, radius=15, fill=(2, 14, 35),
@@ -778,19 +836,36 @@ def create_thumbnail(
             draw, title, font_path, max_width=790,
             start_size=42, min_size=22
         )
-        chapter_box = draw.textbbox(
-            (0, 0), title, font=chapter_font,
-            language="hi", stroke_width=1
+        chapter_lines = wrap_text_to_width(
+            draw, title, chapter_font, max_width=790
         )
-        chapter_width = chapter_box[2] - chapter_box[0]
-        chapter_height = chapter_box[3] - chapter_box[1]
-        chapter_x = plaque[0] + (plaque[2] - plaque[0] - chapter_width) // 2
-        chapter_y = plaque[1] + (plaque[3] - plaque[1] - chapter_height) // 2 - chapter_box[1]
-        draw.text(
-            (chapter_x, chapter_y), title, font=chapter_font,
-            fill=(255, 218, 65), stroke_width=1,
-            stroke_fill=(105, 34, 0), language="hi"
+        chapter_boxes = [
+            draw.textbbox((0, 0), line, font=chapter_font,
+                          language="hi", stroke_width=1)
+            for line in chapter_lines
+        ]
+        chapter_heights = [box[3] - box[1] for box in chapter_boxes]
+        chapter_gap = 1
+        chapter_total_height = sum(chapter_heights) + chapter_gap * (
+            len(chapter_lines) - 1
         )
+        chapter_y = plaque[1] + (
+            plaque[3] - plaque[1] - chapter_total_height
+        ) // 2
+        for line, box, line_height in zip(
+            chapter_lines, chapter_boxes, chapter_heights
+        ):
+            line_width = box[2] - box[0]
+            chapter_x = plaque[0] + (
+                plaque[2] - plaque[0] - line_width
+            ) // 2
+            draw.text(
+                (chapter_x, chapter_y - box[1]), line,
+                font=chapter_font, fill=(255, 218, 65),
+                stroke_width=1, stroke_fill=(105, 34, 0),
+                language="hi"
+            )
+            chapter_y += line_height + chapter_gap
 
     # शिव पुराण के लिए footer बदलना
     if programme == "shivpuran":
