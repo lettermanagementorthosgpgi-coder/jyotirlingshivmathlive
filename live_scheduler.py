@@ -783,15 +783,16 @@ def create_thumbnail(
             outline=(125, 83, 22), width=2
         )
 
-        hook_font = fit_font(
-            draw, topic_hook, font_path, max_width=790,
-            start_size=32, min_size=20
+        # Keep the hook font visibly smaller than the chapter line; wrap
+        # at the shared plaque width instead of shrinking a long sentence.
+        hook_font = ImageFont.truetype(
+            font_path, size=30,
+            layout_engine=ImageFont.Layout.RAQM
         )
         hook_lines = wrap_text_to_width(
             draw, topic_hook, hook_font, max_width=790
         )
-        # If a long subject wraps to many lines, reduce font size until it
-        # fits the fixed two-line-height area (or the smallest readable size).
+        # Keep the hook within two balanced lines and inside the same bounds.
         while len(hook_lines) > 2 and hook_font.size > 20:
             hook_font = ImageFont.truetype(
                 font_path, size=hook_font.size - 2,
