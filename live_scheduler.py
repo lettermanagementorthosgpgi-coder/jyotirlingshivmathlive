@@ -599,10 +599,10 @@ def get_thumbnail_title(programme, lesson, lesson_index, config=None):
 def get_gita_thumbnail_meaning(lesson):
     """Extract the Hindi explanation after the Sanskrit name in config.json."""
     title = str(lesson.get("title", "")).strip()
-    title = re.sub(
-        r"^(?:अध्याय\\s*)?\\d+\\s*[:：.\\-—–]?\\s*", "", title
-    ).strip()    parts = re.split(r"\\s*[—–]\\s*", title, maxsplit=2)
-    return parts[1].strip() if len(parts) > 1 else ""
+    parts = title.split(" — ", 2)
+    if len(parts) == 1:
+        parts = title.split(" – ", 2)
+    return parts[2].strip() if len(parts) > 2 else ""
 
 
 def split_balanced_devanagari(text):
