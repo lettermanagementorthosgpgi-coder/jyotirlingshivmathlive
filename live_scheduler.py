@@ -826,7 +826,7 @@ def create_thumbnail(
             )
             hook_y += line_height + hook_gap
 
-        # Middle layer: original chapter/section name, same width as book plaque.
+        # Middle layer: original chapter/section name, in its established plaque.
         plaque = (410, 550, 1248, 611)
         draw.rounded_rectangle(
             plaque, radius=15, fill=(2, 14, 35),
@@ -836,36 +836,19 @@ def create_thumbnail(
             draw, title, font_path, max_width=790,
             start_size=42, min_size=22
         )
-        chapter_lines = wrap_text_to_width(
-            draw, title, chapter_font, max_width=790
+        chapter_box = draw.textbbox(
+            (0, 0), title, font=chapter_font,
+            language="hi", stroke_width=1
         )
-        chapter_boxes = [
-            draw.textbbox((0, 0), line, font=chapter_font,
-                          language="hi", stroke_width=1)
-            for line in chapter_lines
-        ]
-        chapter_heights = [box[3] - box[1] for box in chapter_boxes]
-        chapter_gap = 1
-        chapter_total_height = sum(chapter_heights) + chapter_gap * (
-            len(chapter_lines) - 1
+        chapter_width = chapter_box[2] - chapter_box[0]
+        chapter_height = chapter_box[3] - chapter_box[1]
+        chapter_x = plaque[0] + (plaque[2] - plaque[0] - chapter_width) // 2
+        chapter_y = plaque[1] + (plaque[3] - plaque[1] - chapter_height) // 2 - chapter_box[1]
+        draw.text(
+            (chapter_x, chapter_y), title, font=chapter_font,
+            fill=(255, 218, 65), stroke_width=1,
+            stroke_fill=(105, 34, 0), language="hi"
         )
-        chapter_y = plaque[1] + (
-            plaque[3] - plaque[1] - chapter_total_height
-        ) // 2
-        for line, box, line_height in zip(
-            chapter_lines, chapter_boxes, chapter_heights
-        ):
-            line_width = box[2] - box[0]
-            chapter_x = plaque[0] + (
-                plaque[2] - plaque[0] - line_width
-            ) // 2
-            draw.text(
-                (chapter_x, chapter_y - box[1]), line,
-                font=chapter_font, fill=(255, 218, 65),
-                stroke_width=1, stroke_fill=(105, 34, 0),
-                language="hi"
-            )
-            chapter_y += line_height + chapter_gap
 
     # शिव पुराण के लिए footer बदलना
     if programme == "shivpuran":
