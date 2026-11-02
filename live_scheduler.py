@@ -705,6 +705,8 @@ def create_thumbnail(
         chapter_name = get_thumbnail_title(
             programme, lesson, lesson_index, config
         )
+        # Strip explanatory Hindi meaning; keep only the Sanskrit chapter name.
+        chapter_name = chapter_name.split(" — ", 1)[0].split(" – ", 1)[0].strip()
         chapter_line = (
             f"अध्याय {chapter_number}: {chapter_name}"
             if chapter_number else chapter_name
@@ -797,7 +799,7 @@ def create_thumbnail(
 
         # Remove the old stray "अध्याय" lettering left of the new stack,
         # while leaving the author's name plaque below it intact.
-        draw.rectangle((135, 548, 298, 612), fill=(4, 20, 39))
+        draw.rectangle((370, 438, 450, 590), fill=(4, 20, 39))
     else:
         # Shiv Puran: three aligned layers. The hook uses the exact same
         # horizontal bounds as the chapter and book-name plaques.
