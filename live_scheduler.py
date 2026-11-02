@@ -700,11 +700,14 @@ def create_thumbnail(
     # Bhagavad Gita: three opaque, tightly stacked plaques.
     # The chapter line contains ONLY chapter number and chapter name.
     if programme == "bhagavadgita":
-        chapter_match = re.search(
-            r"(?:अध्याय\\s*)?(\\d+)", str(lesson.get("title", ""))
-        )
+        # Chapter number is stored at the start of the config title:
+        # "अध्याय 16 — Sanskrit name — Hindi meaning".
+        # Read the first field directly; this avoids fragile escaped regexes.
+        chapter_prefix = str(lesson.get("title", "")).split(" — ", 1)[0]
+        chapter_match = re.search(r"[0-9]+", chapter_prefix)
         chapter_number = str(
-            lesson.get("chapter") or (chapter_match.group(1) if chapter_match else "")
+            lesson.get("chapter")
+            or (chapter_match.group(0) if chapter_match else "")
         )
         chapter_name = get_thumbnail_title(
             programme, lesson, lesson_index, config
