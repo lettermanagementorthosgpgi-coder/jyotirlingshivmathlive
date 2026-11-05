@@ -1487,6 +1487,17 @@ def prepare_retry_run(config, progress, progress_sha, youtube, programme_overrid
                     THUMBNAIL_OUTPUT
                 )
                 upload_thumbnail(youtube, saved_id, THUMBNAIL_OUTPUT)
+
+                # Upload failure के कारण पहले run में progress advance नहीं हुई थी।
+                # केवल तभी advance करें जब saved Broadcast उसी अगले पाठ का हो।
+                saved_lesson = saved.get("lesson") if isinstance(saved, dict) else None
+                slot_for_progress = get_slot(config, programme)
+                lesson_index, next_lesson = get_next_lesson(programme, config, progress)
+                if saved_lesson and saved_lesson == next_lesson["title"]:
+                    advance_progress(programme, lesson_index, config, progress)
+                else:
+                    log("Saved Broadcast और current next lesson अलग हैं; progress को सुरक्षित रखने के लिए advance नहीं किया गया।")
+
                 pending_all.pop(programme, None)
                 save_progress(progress, None)
                 log(f"{programme} का pending thumbnail उसी Broadcast पर सफलतापूर्वक upload हुआ: {saved_id}")
@@ -1669,6 +1680,24 @@ def create_broadcast(
         )
 
         save_progress(progress, progress_sha)
+
+        # यदि यह retry-preparation से मिला पुराना Broadcast है, तो
+        # उसी ID पर prepared thumbnail upload किए बिना pending साफ न करें।
+        if prepared_thumbnail_path:
+            try:
+                upload_thumbnail(youtube, broadcast_id, prepared_thumbnail_path)
+            except Exception as error:
+                log(f"पहले से मौजूद Broadcast पर thumbnail upload असफल: {error}")
+                if raise_thumbnail_error:
+                    raise
+
+        advance_progress(
+            programme,
+            lesson_index,
+            config,
+            progress
+        )
+        save_progress(progress, None)
         return broadcast_id
             # --------------------------------------------------------
     # नया YouTube Broadcast तैयार करें
