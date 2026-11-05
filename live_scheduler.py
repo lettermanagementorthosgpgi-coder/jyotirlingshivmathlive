@@ -1491,7 +1491,6 @@ def prepare_retry_run(config, progress, progress_sha, youtube, programme_overrid
                 # Upload failure के कारण पहले run में progress advance नहीं हुई थी।
                 # केवल तभी advance करें जब saved Broadcast उसी अगले पाठ का हो।
                 saved_lesson = saved.get("lesson") if isinstance(saved, dict) else None
-                slot_for_progress = get_slot(config, programme)
                 lesson_index, next_lesson = get_next_lesson(programme, config, progress)
                 if saved_lesson and saved_lesson == next_lesson["title"]:
                     advance_progress(programme, lesson_index, config, progress)
