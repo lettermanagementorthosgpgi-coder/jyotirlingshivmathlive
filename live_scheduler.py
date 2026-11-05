@@ -966,49 +966,69 @@ def get_slot(config, programme):
     fail(f"config.json में programme '{programme}' नहीं मिला।")
 
 
+BHAGAVADGITA_CHAPTER_COUNT = 18
+
+
 def get_next_lesson(slot_key, config, progress):
     lessons = config["lessons"].get(slot_key, [])
 
     if not lessons:
         fail(f"{slot_key} के लिए lessons उपलब्ध नहीं हैं।")
 
+    cycle_length = (
+        BHAGAVADGITA_CHAPTER_COUNT
+        if slot_key == "bhagavadgita"
+        else len(lessons)
+    )
+    if len(lessons) < cycle_length:
+        fail(
+            f"{slot_key} की lessons सूची अधूरी है: "
+            f"{len(lessons)} / {cycle_length}"
+        )
+
     next_title = progress.get(f"{slot_key}_next_title")
-
     if next_title:
-        for index, item in enumerate(lessons):
+        for index, item in enumerate(lessons[:cycle_length]):
             lesson = normalise_lesson(item)
-
             if lesson["title"] == next_title:
                 return index, lesson
-
         log(
             f"Saved next title नहीं मिला: {next_title}. "
-            "Integer progress इस्तेमाल होगा।"
+            "Integer progress इस्तेमाल होगी।"
         )
 
-    index = int(progress.get(slot_key, 0))
+    try:
+        index = int(progress.get(slot_key, 0))
+    except (TypeError, ValueError):
+        index = 0
 
-    if index < 0 or index >= len(lessons):
-        fail(
-            f"{slot_key} की progress सीमा से बाहर है: {index}"
-        )
-
+    # भगवद्गीता की progress हमेशा 0–17 के चक्र में रहेगी।
+    index %= cycle_length
     return index, normalise_lesson(lessons[index])
 
 
 def advance_progress(slot_key, index, config, progress):
     lessons = config["lessons"].get(slot_key, [])
-    next_index = index + 1
+    cycle_length = (
+        BHAGAVADGITA_CHAPTER_COUNT
+        if slot_key == "bhagavadgita"
+        else len(lessons)
+    )
 
-    if next_index >= len(lessons):
-        next_index = 0
-        log(f"{slot_key}: पूरी सूची समाप्त हुई; क्रम फिर शुरू होगा।")
+    if not lessons or len(lessons) < cycle_length:
+        fail(f"{slot_key} की lessons सूची अधूरी है।")
+
+    next_index = (int(index) + 1) % cycle_length
+    if next_index == 0:
+        log(
+            f"{slot_key}: सभी {cycle_length} अध्याय पूरे हुए; "
+            "क्रम फिर अध्याय 1 से शुरू होगा।"
+        )
 
     progress[slot_key] = next_index
-
-    if lessons:
-        next_lesson = normalise_lesson(lessons[next_index])
-        progress[f"{slot_key}_next_title"] = next_lesson["title"]
+    progress[f"{slot_key}_next_title"] = normalise_lesson(
+        lessons[next_index]
+    )["title"]
 
 
 # ============================================================
@@ -1470,7 +1490,41 @@ def prepare_retry_run(config, progress, progress_sha, youtube, programme_overrid
     date_string = scheduled_time.strftime("%Y-%m-%d")
     saved = get_saved_broadcast(progress, programme, date_string)
     if saved:
-        log(f"{programme} के लिए {date_string} का Broadcast पहले से दर्ज है; retry छोड़ा गया।")
+        pending_all = progress.setdefault("pending_preparation", {})
+        pending = pending_all.get(programme, {})
+        saved_id = saved.get("id") if isinstance(saved, dict) else saved
+
+        # Broadcast पहले बन चुका हो, लेकिन thumbnail upload विफल हुआ हो,
+        # तो उसी Broadcast ID पर सुरक्षित thumbnail दोबारा upload करें।
+        if (
+            pending.get("date") == date_string
+            and pending.get("thumbnail_asset")
+            and saved_id
+        ):
+            try:
+                github_download_binary(
+                    pending["thumbnail_asset"],
+                    THUMBNAIL_OUTPUT
+                )
+                upload_thumbnail(youtube, saved_id, THUMBNAIL_OUTPUT)
+
+                # Upload failure के कारण पहले run में progress advance नहीं हुई थी।
+                # केवल तभी advance करें जब saved Broadcast उसी अगले पाठ का हो।
+                saved_lesson = saved.get("lesson") if isinstance(saved, dict) else None
+                lesson_index, next_lesson = get_next_lesson(programme, config, progress)
+                if saved_lesson and saved_lesson == next_lesson["title"]:
+                    advance_progress(programme, lesson_index, config, progress)
+                else:
+                    log("Saved Broadcast और current next lesson अलग हैं; progress को सुरक्षित रखने के लिए advance नहीं किया गया।")
+
+                pending_all.pop(programme, None)
+                save_progress(progress, None)
+                log(f"{programme} का pending thumbnail उसी Broadcast पर सफलतापूर्वक upload हुआ: {saved_id}")
+            except Exception as error:
+                log(f"Thumbnail retry अभी असफल; pending तैयारी सुरक्षित रहेगी और अगली retry में पुनः प्रयास होगा: {error}")
+            return
+
+        log(f"{programme} के लिए {date_string} का Broadcast पहले से दर्ज है; नया Broadcast नहीं बनाया जाएगा।")
         return
 
     slot = get_slot(config, programme)
@@ -1571,7 +1625,8 @@ def prepare_retry_run(config, progress, progress_sha, youtube, programme_overrid
         progress=progress,
         progress_sha=None,
         prepared_metadata=metadata,
-        prepared_thumbnail_path=THUMBNAIL_OUTPUT
+        prepared_thumbnail_path=THUMBNAIL_OUTPUT,
+        raise_thumbnail_error=True
     )
     pending_all.pop(programme, None)
     save_progress(progress, None)
@@ -1588,7 +1643,8 @@ def create_broadcast(
     progress,
     progress_sha,
     prepared_metadata=None,
-    prepared_thumbnail_path=None
+    prepared_thumbnail_path=None,
+    raise_thumbnail_error=False
 ):
     programme = slot["key"]
     date_string = scheduled_time.strftime("%Y-%m-%d")
@@ -1643,6 +1699,24 @@ def create_broadcast(
         )
 
         save_progress(progress, progress_sha)
+
+        # यदि यह retry-preparation से मिला पुराना Broadcast है, तो
+        # उसी ID पर prepared thumbnail upload किए बिना pending साफ न करें।
+        if prepared_thumbnail_path:
+            try:
+                upload_thumbnail(youtube, broadcast_id, prepared_thumbnail_path)
+            except Exception as error:
+                log(f"पहले से मौजूद Broadcast पर thumbnail upload असफल: {error}")
+                if raise_thumbnail_error:
+                    raise
+
+        advance_progress(
+            programme,
+            lesson_index,
+            config,
+            progress
+        )
+        save_progress(progress, None)
         return broadcast_id
             # --------------------------------------------------------
     # नया YouTube Broadcast तैयार करें
@@ -1727,9 +1801,12 @@ def create_broadcast(
     except Exception as error:
         log(
             "Thumbnail बनाने या upload करने में समस्या आई। "
-            "Broadcast सुरक्षित है और प्रक्रिया जारी रहेगी। "
+            "Broadcast सुरक्षित है। "
             f"विवरण: {error}"
         )
+        if raise_thumbnail_error:
+            # Retry workflow को pending state सुरक्षित रखने दें।
+            raise
 
     # --------------------------------------------------------
     # Tags और Playlist की जाँच
@@ -1871,6 +1948,30 @@ def main():
         return
 
     youtube = get_youtube_service()
+
+    if action == "retry_thumbnail":
+        if programme not in ("shivpuran", "bhagavadgita"):
+            fail("retry_thumbnail के लिए PROGRAMME चुनें।")
+        date_text = os.environ.get("BROADCAST_DATE", "").strip()
+        if not date_text:
+            fail("retry_thumbnail के लिए BROADCAST_DATE (YYYY-MM-DD) आवश्यक है।")
+        try:
+            datetime.strptime(date_text, "%Y-%m-%d")
+        except ValueError:
+            fail("BROADCAST_DATE का प्रारूप YYYY-MM-DD होना चाहिए।")
+
+        saved = get_saved_broadcast(progress, programme, date_text)
+        saved_id = saved.get("id") if isinstance(saved, dict) else saved
+        broadcast_id = os.environ.get("BROADCAST_ID", "").strip() or saved_id
+        if not broadcast_id:
+            fail(f"{programme} के लिए {date_text} का saved Broadcast ID नहीं मिला।")
+
+        asset_path = f"retry_assets/{programme}_{date_text}.jpg"
+        github_download_binary(asset_path, THUMBNAIL_OUTPUT)
+        upload_thumbnail(youtube, broadcast_id, THUMBNAIL_OUTPUT)
+        log(f"पुराने Broadcast पर thumbnail सफलतापूर्वक upload हुआ: {broadcast_id}")
+        log("इस repair action ने कोई नया Broadcast नहीं बनाया और progress आगे नहीं बढ़ाई।")
+        return
 
     if action == "prepare_retry":
         prepare_retry_run(config, progress, progress_sha, youtube, programme or None)

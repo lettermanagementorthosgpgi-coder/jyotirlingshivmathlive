@@ -23,6 +23,7 @@ on:
           - test_image
           - test_metadata
           - prepare_retry
+          - retry_thumbnail
         default: test_image
 
       programme:
