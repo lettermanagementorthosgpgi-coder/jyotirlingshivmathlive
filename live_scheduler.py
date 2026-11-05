@@ -966,49 +966,69 @@ def get_slot(config, programme):
     fail(f"config.json में programme '{programme}' नहीं मिला।")
 
 
+BHAGAVADGITA_CHAPTER_COUNT = 18
+
+
 def get_next_lesson(slot_key, config, progress):
     lessons = config["lessons"].get(slot_key, [])
 
     if not lessons:
         fail(f"{slot_key} के लिए lessons उपलब्ध नहीं हैं।")
 
+    cycle_length = (
+        BHAGAVADGITA_CHAPTER_COUNT
+        if slot_key == "bhagavadgita"
+        else len(lessons)
+    )
+    if len(lessons) < cycle_length:
+        fail(
+            f"{slot_key} की lessons सूची अधूरी है: "
+            f"{len(lessons)} / {cycle_length}"
+        )
+
     next_title = progress.get(f"{slot_key}_next_title")
-
     if next_title:
-        for index, item in enumerate(lessons):
+        for index, item in enumerate(lessons[:cycle_length]):
             lesson = normalise_lesson(item)
-
             if lesson["title"] == next_title:
                 return index, lesson
-
         log(
             f"Saved next title नहीं मिला: {next_title}. "
-            "Integer progress इस्तेमाल होगा।"
+            "Integer progress इस्तेमाल होगी।"
         )
 
-    index = int(progress.get(slot_key, 0))
+    try:
+        index = int(progress.get(slot_key, 0))
+    except (TypeError, ValueError):
+        index = 0
 
-    if index < 0 or index >= len(lessons):
-        fail(
-            f"{slot_key} की progress सीमा से बाहर है: {index}"
-        )
-
+    # भगवद्गीता की progress हमेशा 0–17 के चक्र में रहेगी।
+    index %= cycle_length
     return index, normalise_lesson(lessons[index])
 
 
 def advance_progress(slot_key, index, config, progress):
     lessons = config["lessons"].get(slot_key, [])
-    next_index = index + 1
+    cycle_length = (
+        BHAGAVADGITA_CHAPTER_COUNT
+        if slot_key == "bhagavadgita"
+        else len(lessons)
+    )
 
-    if next_index >= len(lessons):
-        next_index = 0
-        log(f"{slot_key}: पूरी सूची समाप्त हुई; क्रम फिर शुरू होगा।")
+    if not lessons or len(lessons) < cycle_length:
+        fail(f"{slot_key} की lessons सूची अधूरी है।")
+
+    next_index = (int(index) + 1) % cycle_length
+    if next_index == 0:
+        log(
+            f"{slot_key}: सभी {cycle_length} अध्याय पूरे हुए; "
+            "क्रम फिर अध्याय 1 से शुरू होगा।"
+        )
 
     progress[slot_key] = next_index
-
-    if lessons:
-        next_lesson = normalise_lesson(lessons[next_index])
-        progress[f"{slot_key}_next_title"] = next_lesson["title"]
+    progress[f"{slot_key}_next_title"] = normalise_lesson(
+        lessons[next_index]
+    )["title"]
 
 
 # ============================================================
