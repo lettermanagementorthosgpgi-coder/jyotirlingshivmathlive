@@ -1470,7 +1470,31 @@ def prepare_retry_run(config, progress, progress_sha, youtube, programme_overrid
     date_string = scheduled_time.strftime("%Y-%m-%d")
     saved = get_saved_broadcast(progress, programme, date_string)
     if saved:
-        log(f"{programme} के लिए {date_string} का Broadcast पहले से दर्ज है; retry छोड़ा गया।")
+        pending_all = progress.setdefault("pending_preparation", {})
+        pending = pending_all.get(programme, {})
+        saved_id = saved.get("id") if isinstance(saved, dict) else saved
+
+        # Broadcast पहले बन चुका हो, लेकिन thumbnail upload विफल हुआ हो,
+        # तो उसी Broadcast ID पर सुरक्षित thumbnail दोबारा upload करें।
+        if (
+            pending.get("date") == date_string
+            and pending.get("thumbnail_asset")
+            and saved_id
+        ):
+            try:
+                github_download_binary(
+                    pending["thumbnail_asset"],
+                    THUMBNAIL_OUTPUT
+                )
+                upload_thumbnail(youtube, saved_id, THUMBNAIL_OUTPUT)
+                pending_all.pop(programme, None)
+                save_progress(progress, None)
+                log(f"{programme} का pending thumbnail उसी Broadcast पर सफलतापूर्वक upload हुआ: {saved_id}")
+            except Exception as error:
+                log(f"Thumbnail retry अभी असफल; pending तैयारी सुरक्षित रहेगी और अगली retry में पुनः प्रयास होगा: {error}")
+            return
+
+        log(f"{programme} के लिए {date_string} का Broadcast पहले से दर्ज है; नया Broadcast नहीं बनाया जाएगा।")
         return
 
     slot = get_slot(config, programme)
@@ -1571,7 +1595,8 @@ def prepare_retry_run(config, progress, progress_sha, youtube, programme_overrid
         progress=progress,
         progress_sha=None,
         prepared_metadata=metadata,
-        prepared_thumbnail_path=THUMBNAIL_OUTPUT
+        prepared_thumbnail_path=THUMBNAIL_OUTPUT,
+        raise_thumbnail_error=True
     )
     pending_all.pop(programme, None)
     save_progress(progress, None)
@@ -1588,7 +1613,8 @@ def create_broadcast(
     progress,
     progress_sha,
     prepared_metadata=None,
-    prepared_thumbnail_path=None
+    prepared_thumbnail_path=None,
+    raise_thumbnail_error=False
 ):
     programme = slot["key"]
     date_string = scheduled_time.strftime("%Y-%m-%d")
@@ -1727,9 +1753,12 @@ def create_broadcast(
     except Exception as error:
         log(
             "Thumbnail बनाने या upload करने में समस्या आई। "
-            "Broadcast सुरक्षित है और प्रक्रिया जारी रहेगी। "
+            "Broadcast सुरक्षित है। "
             f"विवरण: {error}"
         )
+        if raise_thumbnail_error:
+            # Retry workflow को pending state सुरक्षित रखने दें।
+            raise
 
     # --------------------------------------------------------
     # Tags और Playlist की जाँच
@@ -1871,6 +1900,30 @@ def main():
         return
 
     youtube = get_youtube_service()
+
+    if action == "retry_thumbnail":
+        if programme not in ("shivpuran", "bhagavadgita"):
+            fail("retry_thumbnail के लिए PROGRAMME चुनें।")
+        date_text = os.environ.get("BROADCAST_DATE", "").strip()
+        if not date_text:
+            fail("retry_thumbnail के लिए BROADCAST_DATE (YYYY-MM-DD) आवश्यक है।")
+        try:
+            datetime.strptime(date_text, "%Y-%m-%d")
+        except ValueError:
+            fail("BROADCAST_DATE का प्रारूप YYYY-MM-DD होना चाहिए।")
+
+        saved = get_saved_broadcast(progress, programme, date_text)
+        saved_id = saved.get("id") if isinstance(saved, dict) else saved
+        broadcast_id = os.environ.get("BROADCAST_ID", "").strip() or saved_id
+        if not broadcast_id:
+            fail(f"{programme} के लिए {date_text} का saved Broadcast ID नहीं मिला।")
+
+        asset_path = f"retry_assets/{programme}_{date_text}.jpg"
+        github_download_binary(asset_path, THUMBNAIL_OUTPUT)
+        upload_thumbnail(youtube, broadcast_id, THUMBNAIL_OUTPUT)
+        log(f"पुराने Broadcast पर thumbnail सफलतापूर्वक upload हुआ: {broadcast_id}")
+        log("इस repair action ने कोई नया Broadcast नहीं बनाया और progress आगे नहीं बढ़ाई।")
+        return
 
     if action == "prepare_retry":
         prepare_retry_run(config, progress, progress_sha, youtube, programme or None)
