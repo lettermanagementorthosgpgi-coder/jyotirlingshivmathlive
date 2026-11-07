@@ -543,7 +543,7 @@ def fit_font(
 
 
 def get_thumbnail_title(programme, lesson, lesson_index, config=None):
-    """Return the Sanskrit chapter name for Gita; preserve other programmes."""
+    """Return an accurate chapter label; never infer chapters from lesson-list positions."""
     title = str(lesson.get("title", "धार्मिक प्रवचन")).strip()
     chapter = lesson.get("chapter")
 
@@ -556,29 +556,31 @@ def get_thumbnail_title(programme, lesson, lesson_index, config=None):
             return parts[1].strip()
         return title
 
+    # Prefer explicit chapter metadata or a chapter number written in the title.
     if chapter is None:
         match = re.search(
-            r"(?:अध्याय|अध्याय संख्या|Adhyay|Chapter)\\s*[-:]?\\s*(\\d+)",
+            r"(?:अध्याय|Adhyay|Chapter)\\s*[-:]?\\s*(\\d+)",
             title, re.I
         )
         if match:
             chapter = match.group(1)
 
+    # Shiv Puran lesson-list positions are NOT chapter numbers: a chapter can
+    # contain several topics. Use only source-verified topic-to-chapter mappings.
+    if programme == "shivpuran" and chapter is None:
+        topic = title.split(" - ", 1)[1].strip() if " - " in title else title
+        verified_chapters = {
+            "त्रिपुर सहित उनके स्वामियों के वध की प्रार्थना": 6,
+            "देवताओं द्वारा शिव-स्तवन": 7,
+            "दिव्य रथ का निर्माण": 8,
+            "भगवान शिव की यात्रा": 9,
+            "त्रिपुरासुर-वध": 10,
+        }
+        chapter = verified_chapters.get(topic)
+
     clean_title = re.sub(
         r"^(?:अध्याय\\s*)?\\d+\\s*[:：.\\-—–]?\\s*", "", title
     ).strip()
-
-    if chapter is None and config:
-        lessons = config.get("lessons", {}).get("shivpuran", [])
-        section_prefix = title.split(" - ", 1)[0].strip()
-        if "संहिता" in section_prefix:
-            chapter = 0
-            for index, item in enumerate(lessons):
-                item_title = normalise_lesson(item).get("title", "").strip()
-                if item_title.split(" - ", 1)[0].strip() == section_prefix:
-                    chapter += 1
-                if index == lesson_index:
-                    break
 
     if programme == "shivpuran":
         section = title.split(" - ", 1)[0].strip()
@@ -590,6 +592,7 @@ def get_thumbnail_title(programme, lesson, lesson_index, config=None):
             section_label = "श्री रुद्र संहिता"
         if chapter is not None:
             return f"{section_label} — अध्याय {chapter}"
+        # Unknown chapter is intentionally omitted rather than guessed.
         return section_label
 
     if chapter is not None:
