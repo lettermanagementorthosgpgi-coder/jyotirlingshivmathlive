@@ -123,37 +123,36 @@ def parse_date_time(date_value, time_value):
 
 
 def normalise_lesson(lesson):
-
-    if isinstance(lesson, str):
-        return {
-            "title": lesson,
-            "chapter": None,
-            "meaning": ""
-        }
-
+    """Normalize lesson data and infer a Gita chapter number from its title when absent."""
     if isinstance(lesson, dict):
-
         title = (
             lesson.get("title")
             or lesson.get("hindi_name")
             or lesson.get("sanskrit_name")
             or "धार्मिक प्रवचन"
         )
+        chapter = lesson.get("chapter")
+    else:
+        title = str(lesson)
+        chapter = None
 
-        return {
-            "title": str(title),
-            "chapter": lesson.get("chapter"),
-            "meaning": str(lesson.get("meaning", "")),
+    if chapter is None:
+        match = re.search(r"अध्याय\\s*(\\d+)", str(title))
+        if match:
+            chapter = int(match.group(1))
+
+    result = {
+        "title": str(title),
+        "chapter": chapter,
+        "meaning": str(lesson.get("meaning", "")) if isinstance(lesson, dict) else ""
+    }
+    if isinstance(lesson, dict):
+        result.update({
             "verse_start": lesson.get("verse_start"),
             "verse_end": lesson.get("verse_end"),
             "verse_range": lesson.get("verse_range", "")
-        }
-
-    return {
-        "title": str(lesson),
-        "chapter": None,
-        "meaning": ""
-    }
+        })
+    return result
 
 
 # ============================================================
