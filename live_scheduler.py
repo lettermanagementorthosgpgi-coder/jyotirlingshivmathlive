@@ -143,7 +143,10 @@ def normalise_lesson(lesson):
         return {
             "title": str(title),
             "chapter": lesson.get("chapter"),
-            "meaning": str(lesson.get("meaning", ""))
+            "meaning": str(lesson.get("meaning", "")),
+            "verse_start": lesson.get("verse_start"),
+            "verse_end": lesson.get("verse_end"),
+            "verse_range": lesson.get("verse_range", "")
         }
 
     return {
@@ -254,6 +257,8 @@ def github_download_binary(path, local_path):
 def research_youtube_topic(youtube, programme, lesson):
     """Use YouTube search results as grounded keyword context, not as factual authority."""
     query = str(lesson.get("title", "")).strip()
+    if programme == "bhagavadgita" and lesson.get("verse_range"):
+        query += " " + str(lesson["verse_range"])
     if programme == "shivpuran":
         query += " शिव पुराण कथा"
     else:
@@ -717,9 +722,11 @@ def create_thumbnail(
         )
         # Strip explanatory Hindi meaning; keep only the Sanskrit chapter name.
         chapter_name = chapter_name.split(" — ", 1)[0].split(" – ", 1)[0].strip()
+        verse_range = str(lesson.get("verse_range", "")).strip()
         chapter_line = (
-            f"अध्याय {chapter_number}: {chapter_name}"
-            if chapter_number else chapter_name
+            f"अध्याय {chapter_number} ({verse_range}): {chapter_name}"
+            if chapter_number and verse_range
+            else (f"अध्याय {chapter_number}: {chapter_name}" if chapter_number else chapter_name)
         )
 
         # Keep the author's name plaque on the lower-left unobstructed.
@@ -742,8 +749,12 @@ def create_thumbnail(
                 outline=(246, 190, 35), width=2
             )
 
-        # 1) Tricky title — retained as approved.
-        hook = "दैवी गुण अपनाएँ — आसुरी प्रवृत्तियों से बचें"
+        # 1) Dynamic hook: never show a chapter-16-only message on other chapters.
+        verse_range = str(lesson.get("verse_range", "")).strip()
+        hook = (
+            f"{verse_range} का अर्थ और जीवन-संदेश"
+            if verse_range else f"{chapter_name} का अर्थ और जीवन-संदेश"
+        )
         hook_font = fit_font(
             draw, hook, font_path, max_width=760,
             start_size=39, min_size=28
@@ -972,6 +983,21 @@ def get_slot(config, programme):
 BHAGAVADGITA_CHAPTER_COUNT = 18
 
 
+def apply_gita_verse_range(slot_key, index, lesson, progress):
+    """Attach the manually selected verse range only to its matching chapter."""
+    if slot_key != "bhagavadgita":
+        return lesson
+    selected = progress.get("bhagavadgita_verse_range")
+    if not isinstance(selected, dict) or int(selected.get("chapter", -1)) != index + 1:
+        return lesson
+    start = int(selected["start"])
+    end = int(selected["end"])
+    lesson["verse_start"] = start
+    lesson["verse_end"] = end
+    lesson["verse_range"] = f"श्लोक {start}–{end}"
+    return lesson
+
+
 def get_next_lesson(slot_key, config, progress):
     lessons = config["lessons"].get(slot_key, [])
 
@@ -994,7 +1020,7 @@ def get_next_lesson(slot_key, config, progress):
         for index, item in enumerate(lessons[:cycle_length]):
             lesson = normalise_lesson(item)
             if lesson["title"] == next_title:
-                return index, lesson
+                return index, apply_gita_verse_range(slot_key, index, lesson, progress)
         log(
             f"Saved next title नहीं मिला: {next_title}. "
             "Integer progress इस्तेमाल होगी।"
@@ -1007,7 +1033,8 @@ def get_next_lesson(slot_key, config, progress):
 
     # भगवद्गीता की progress हमेशा 0–17 के चक्र में रहेगी।
     index %= cycle_length
-    return index, normalise_lesson(lessons[index])
+    lesson = normalise_lesson(lessons[index])
+    return index, apply_gita_verse_range(slot_key, index, lesson, progress)
 
 
 def advance_progress(slot_key, index, config, progress):
@@ -1020,6 +1047,12 @@ def advance_progress(slot_key, index, config, progress):
 
     if not lessons or len(lessons) < cycle_length:
         fail(f"{slot_key} की lessons सूची अधूरी है।")
+
+    if slot_key == "bhagavadgita" and progress.get("bhagavadgita_verse_range"):
+        selected = progress["bhagavadgita_verse_range"]
+        if int(selected.get("chapter", -1)) == int(index) + 1:
+            log("भगवद्गीता का अध्याय/श्लोक क्रम मैन्युअल है; अगला अध्याय तभी बदलेगा जब नया श्लोक-खंड दिया जाएगा।")
+            return
 
     next_index = (int(index) + 1) % cycle_length
     if next_index == 0:
@@ -1285,10 +1318,17 @@ def generate_youtube_metadata(programme, lesson, research_context=None):
     source_title = str(lesson.get("title", "धार्मिक प्रवचन")).strip()
     programme_name = "शिव महापुराण" if programme == "shivpuran" else "श्रीमद्भगवद्गीता"
     suffix = "|Mahant Rajesh Kumar Tiwari"
+    verse_range = str(lesson.get("verse_range", "")).strip() if programme == "bhagavadgita" else ""
+    range_instruction = (
+        f"आज केवल {verse_range} पर प्रवचन है। Title, description, tags और hashtags में यही श्लोक-सीमा स्पष्ट रखें; पूरे अध्याय का प्रवचन होने का दावा न करें।"
+        if verse_range else ""
+    )
     prompt = f'''
 आप एक वरिष्ठ हिंदी धार्मिक शोधकर्ता, YouTube SEO विशेषज्ञ और devotional content writer हैं।
 कार्यक्रम: {programme_name}
 आज का वास्तविक पाठ/प्रसंग: {source_title}
+आज की श्लोक-सीमा: {verse_range or "लागू नहीं"}
+विशेष निर्देश: {range_instruction}
 YouTube पर इसी विषय की खोज से प्राप्त संदर्भ (केवल खोज-शब्द/प्रासंगिकता समझने हेतु; इन्हें शास्त्रीय प्रमाण न मानें):
 {json.dumps(research_context or [], ensure_ascii=False)}
 चैनल: {CHANNEL_NAME}
@@ -1463,8 +1503,9 @@ def safe_fallback_metadata(programme, lesson):
             break
         words.append(word)
     title = (" ".join(words) or programme_name) + " " + suffix
+    verse_text = f" ({lesson.get('verse_range')})" if programme == "bhagavadgita" and lesson.get("verse_range") else ""
     description = (
-        f"{programme_name} का आज का पाठ: {lesson.get('title', '')}. "
+        f"{programme_name} का आज का पाठ: {lesson.get('title', '')}{verse_text}. "
         f"इस धार्मिक पाठ में दिए गए प्रसंग का वाचन एवं व्याख्या प्रस्तुत की जाएगी। "
         f"प्रस्तुति: {AUTHOR}\n{CHANNEL_NAME}\n{WEBSITE}\n{CHANNEL_URL}"
     )
@@ -1903,6 +1944,39 @@ def get_scheduled_time(slot):
 # MAIN
 # ============================================================
 
+def update_gita_verse_range(config, progress):
+    """Save the user's chapter and verse range without creating a Broadcast."""
+    try:
+        chapter = int(os.environ.get("GITA_CHAPTER", "").strip())
+        verse_start = int(os.environ.get("GITA_VERSE_START", "").strip())
+        verse_end = int(os.environ.get("GITA_VERSE_END", "").strip())
+    except (TypeError, ValueError):
+        fail("अध्याय संख्या, श्लोक प्रारंभ और श्लोक समाप्त — तीनों में पूर्णांक भरें।")
+
+    lessons = config.get("lessons", {}).get("bhagavadgita", [])
+    if chapter < 1 or chapter > BHAGAVADGITA_CHAPTER_COUNT or chapter > len(lessons):
+        fail("गीता अध्याय संख्या 1 से 18 के बीच होनी चाहिए।")
+    if verse_start < 1 or verse_end < verse_start:
+        fail("श्लोक सीमा सही दें: प्रारंभ 1 या अधिक और समाप्ति प्रारंभ से कम नहीं होनी चाहिए।")
+
+    lesson = normalise_lesson(lessons[chapter - 1])
+    progress["bhagavadgita"] = chapter - 1
+    progress["bhagavadgita_next_title"] = lesson["title"]
+    progress["bhagavadgita_verse_range"] = {
+        "chapter": chapter,
+        "start": verse_start,
+        "end": verse_end
+    }
+    # Discard stale SEO/thumbnail preparation so the next retry rebuilds both.
+    pending = progress.get("pending_preparation", {})
+    pending.pop("bhagavadgita", None)
+    if not pending:
+        progress.pop("pending_preparation", None)
+    save_progress(progress, None)
+    log(f"गीता अपडेट सुरक्षित: अध्याय {chapter}, श्लोक {verse_start}–{verse_end}")
+    log("अभी कोई YouTube Broadcast नहीं बनाया गया।")
+
+
 def main():
     log("YouTube Live Scheduler शुरू हो रहा है।")
 
@@ -1919,6 +1993,12 @@ def main():
         "PROGRAMME",
         ""
     ).strip().lower()
+
+    if action == "update_gita_range":
+        if programme != "bhagavadgita":
+            fail("Update Gita Chapter & Shlok के लिए programme bhagavadgita चुनें।")
+        update_gita_verse_range(config, progress)
+        return
 
     # सुरक्षित metadata test: YouTube API/Broadcast/progress में कोई बदलाव नहीं।
     if action == "test_metadata":
