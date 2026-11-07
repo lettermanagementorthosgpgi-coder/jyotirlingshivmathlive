@@ -559,7 +559,7 @@ def get_thumbnail_title(programme, lesson, lesson_index, config=None):
     # Prefer explicit chapter metadata or a chapter number written in the title.
     if chapter is None:
         match = re.search(
-            r"(?:अध्याय|Adhyay|Chapter)\\s*[-:]?\\s*(\\d+)",
+            r"(?:अध्याय|Adhyay|Chapter)\s*[-:]?\s*(\d+)",
             title, re.I
         )
         if match:
@@ -579,7 +579,7 @@ def get_thumbnail_title(programme, lesson, lesson_index, config=None):
         chapter = verified_chapters.get(topic)
 
     clean_title = re.sub(
-        r"^(?:अध्याय\\s*)?\\d+\\s*[:：.\\-—–]?\\s*", "", title
+        r"^(?:अध्याय\s*)?\d+\s*[:：.\-—–]?\s*", "", title
     ).strip()
 
     if programme == "shivpuran":
