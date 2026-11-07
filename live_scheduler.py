@@ -1969,8 +1969,10 @@ def update_gita_verse_range(config, progress):
     lessons = config.get("lessons", {}).get("bhagavadgita", [])
     if chapter < 1 or chapter > BHAGAVADGITA_CHAPTER_COUNT or chapter > len(lessons):
         fail("गीता अध्याय संख्या 1 से 18 के बीच होनी चाहिए।")
-    if verse_start < 1 or verse_end < verse_start:
-        fail("श्लोक सीमा सही दें: प्रारंभ 1 या अधिक और समाप्ति प्रारंभ से कम नहीं होनी चाहिए।")
+    verse_counts = [47, 72, 43, 42, 29, 47, 30, 28, 34, 42, 55, 20, 35, 27, 20, 24, 28, 78]
+    max_verse = verse_counts[chapter - 1]
+    if verse_start < 1 or verse_end < verse_start or verse_end > max_verse:
+        fail(f"अध्याय {chapter} के लिए श्लोक सीमा 1 से {max_verse} के बीच होनी चाहिए।")
 
     lesson = normalise_lesson(lessons[chapter - 1])
     progress["bhagavadgita"] = chapter - 1
