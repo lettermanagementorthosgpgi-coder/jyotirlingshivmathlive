@@ -137,7 +137,7 @@ def normalise_lesson(lesson):
         chapter = None
 
     if chapter is None:
-        match = re.search(r"अध्याय\\s*(\\d+)", str(title))
+        match = re.search(r"अध्याय\s*(\d+)", str(title))
         if match:
             chapter = int(match.group(1))
 
