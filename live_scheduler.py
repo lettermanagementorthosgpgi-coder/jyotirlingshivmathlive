@@ -1361,6 +1361,9 @@ HASHTAGS: 4-6 प्रासंगिक hashtags दें।
         title = re.sub(r"\s*\|\s*Mahant Rajesh Kumar Tiwari\s*$", "", title, flags=re.I).strip()
         if not title:
             raise ValueError("AI ने title नहीं दिया")
+        # Gita SEO title must always name the exact verse range first.
+        if verse_range and verse_range.casefold() not in title.casefold():
+            title = f"भगवद्गीता {verse_range} | {title}"
         # पूरे शब्दों को सुरक्षित रखते हुए suffix सहित 100 अक्षरों में रखें।
         max_prefix = 100 - len(suffix) - 1
         if len(title) > max_prefix:
@@ -1378,11 +1381,19 @@ HASHTAGS: 4-6 प्रासंगिक hashtags दें।
         if not title.endswith(suffix) or len(title) > 100:
             raise ValueError("Title suffix/length validation failed")
         description = str(data.get("description", "")).strip()
+        if verse_range and verse_range.casefold() not in description.casefold():
+            description = f"आज का पाठ: श्रीमद्भगवद्गीता, अध्याय {lesson.get('chapter')}, {verse_range}. इस प्रवचन में इसी श्लोक-खंड का अर्थ और भावार्थ प्रस्तुत है।\n\n" + description
         if len(description) < 500:
             raise ValueError(f"Description बहुत छोटा है ({len(description)} characters); दोबारा प्रयास आवश्यक")
         raw_tags = data.get("tags", [])
         if not isinstance(raw_tags, list):
             raise ValueError("AI tags सूची के रूप में नहीं मिले")
+        if verse_range:
+            raw_tags = list(raw_tags) + [
+                f"भगवद्गीता अध्याय {lesson.get('chapter')} {verse_range}",
+                f"Bhagavad Gita chapter {lesson.get('chapter')} {verse_range}",
+                f"Gita shlok {lesson.get('verse_start')}-{lesson.get('verse_end')}"
+            ]
         hashtags = [str(x).strip() if str(x).strip().startswith("#") else "#" + str(x).strip().replace(" ", "") for x in data.get("hashtags", []) if str(x).strip()]
         if len(raw_tags) < 12:
             raise ValueError("AI ने पर्याप्त विषय-विशिष्ट tags नहीं दिए")
@@ -1495,6 +1506,8 @@ def safe_fallback_metadata(programme, lesson):
     programme_name = "शिव महापुराण" if programme == "shivpuran" else "श्रीमद्भगवद्गीता"
     suffix = "|Mahant Rajesh Kumar Tiwari"
     base = str(lesson.get("title", programme_name)).strip()
+    if programme == "bhagavadgita" and lesson.get("verse_range"):
+        base = f"भगवद्गीता {lesson['verse_range']} | {base}"
     max_prefix = 100 - len(suffix) - 1
     words = []
     for word in base.split():
