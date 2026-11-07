@@ -1544,6 +1544,16 @@ def prepare_retry_run(config, progress, progress_sha, youtube, programme_overrid
             log("अभी किसी कार्यक्रम की preparation window नहीं है; कोई काम नहीं किया जाएगा।")
             return
 
+    if programme == "bhagavadgita":
+        selected_range = progress.get("bhagavadgita_verse_range")
+        if not isinstance(selected_range, dict):
+            log("भगवद्गीता की आज की श्लोक-सीमा अभी दर्ज नहीं है; गलत पूरे-अध्याय वाला SEO/Broadcast रोक दिया गया।")
+            return
+        current_index, current_lesson = get_next_lesson(programme, config, progress)
+        if int(selected_range.get("chapter", -1)) != current_index + 1:
+            log("भगवद्गीता की श्लोक-सीमा और चुना हुआ अध्याय मेल नहीं खाते; तैयारी रोक दी गई।")
+            return
+
     date_string = scheduled_time.strftime("%Y-%m-%d")
     saved = get_saved_broadcast(progress, programme, date_string)
     if saved:
