@@ -24,6 +24,7 @@ on:
           - test_metadata
           - prepare_retry
           - retry_thumbnail
+          - update_gita_range
         default: test_image
 
       programme:
@@ -46,6 +47,21 @@ on:
 
       broadcast_id:
         description: "Existing YouTube Broadcast ID (if required)"
+        required: false
+        type: string
+
+      gita_chapter:
+        description: "Bhagavad Gita chapter number (1-18)"
+        required: false
+        type: string
+
+      gita_verse_start:
+        description: "First shloka number for today's discourse"
+        required: false
+        type: string
+
+      gita_verse_end:
+        description: "Last shloka number for today's discourse"
         required: false
         type: string
 
@@ -94,6 +110,9 @@ jobs:
           BROADCAST_DATE: ${{ inputs.broadcast_date }}
           ACTUAL_TIME: ${{ inputs.actual_time }}
           BROADCAST_ID: ${{ inputs.broadcast_id }}
+          GITA_CHAPTER: ${{ inputs.gita_chapter }}
+          GITA_VERSE_START: ${{ inputs.gita_verse_start }}
+          GITA_VERSE_END: ${{ inputs.gita_verse_end }}
 
           GITHUB_REPOSITORY: ${{ github.repository }}
 
