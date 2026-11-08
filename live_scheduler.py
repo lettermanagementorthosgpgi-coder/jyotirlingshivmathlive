@@ -1307,6 +1307,40 @@ def ensure_playlist_assignment(
 
 
 
+def fetch_gita_verse_source(chapter, verse_start, verse_end):
+    """Fetch each exact Gita verse and Hindi translation before writing SEO."""
+    verses = []
+    for verse_number in range(int(verse_start), int(verse_end) + 1):
+        url = f"https://vedicscriptures.github.io/slok/{int(chapter)}/{verse_number}"
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": "JyotirlingShivmath-SEO/1.0"},
+            method="GET"
+        )
+        with urllib.request.urlopen(request, timeout=25) as response:
+            item = json.loads(response.read().decode("utf-8"))
+        if int(item.get("chapter", -1)) != int(chapter) or int(item.get("verse", -1)) != verse_number:
+            raise RuntimeError(f"गीता स्रोत से अध्याय {chapter}, श्लोक {verse_number} का मिलान नहीं हुआ")
+        shloka = str(item.get("slok", "")).strip()
+        hindi_meanings = []
+        for key, field in (("Swami Tejomayananda", "ht"), ("Swami Ramsukhdas", "ht"), ("Swami Chinmayananda", "hc")):
+            block = item.get({"Swami Tejomayananda": "tej", "Swami Ramsukhdas": "rams", "Swami Chinmayananda": "chinmay"}[key], {})
+            meaning = str(block.get(field, "")).strip() if isinstance(block, dict) else ""
+            if meaning and meaning not in ("N/A", "None"):
+                hindi_meanings.append({"source": key, "meaning": meaning[:1800]})
+        if not shloka or not hindi_meanings:
+            raise RuntimeError(f"गीता अध्याय {chapter}, श्लोक {verse_number} का मूल पाठ/हिंदी भावार्थ स्रोत में अधूरा है")
+        verses.append({
+            "chapter": int(chapter),
+            "verse": verse_number,
+            "sanskrit": shloka,
+            "hindi_reference_meanings": hindi_meanings
+        })
+    if len(verses) != int(verse_end) - int(verse_start) + 1:
+        raise RuntimeError("गीता के सभी श्लोकों का स्रोत डेटा प्राप्त नहीं हुआ")
+    return verses
+
+
 # ============================================================
 # GEMINI SEO METADATA GENERATION
 # ============================================================
@@ -1317,6 +1351,13 @@ def generate_youtube_metadata(programme, lesson, research_context=None):
     programme_name = "शिव महापुराण" if programme == "shivpuran" else "श्रीमद्भगवद्गीता"
     suffix = "|Mahant Rajesh Kumar Tiwari"
     verse_range = str(lesson.get("verse_range", "")).strip() if programme == "bhagavadgita" else ""
+    verse_source = []
+    if verse_range:
+        verse_source = fetch_gita_verse_source(
+            lesson.get("chapter"),
+            lesson.get("verse_start"),
+            lesson.get("verse_end")
+        )
     range_instruction = (
         f"आज केवल {verse_range} पर प्रवचन है। Title, description, tags और hashtags में यही श्लोक-सीमा स्पष्ट रखें; पूरे अध्याय का प्रवचन होने का दावा न करें।"
         if verse_range else ""
@@ -1326,6 +1367,8 @@ def generate_youtube_metadata(programme, lesson, research_context=None):
 कार्यक्रम: {programme_name}
 आज का वास्तविक पाठ/प्रसंग: {source_title}
 आज की श्लोक-सीमा: {verse_range or "लागू नहीं"}
+प्रत्येक श्लोक का मूल संस्कृत पाठ और प्रकाशित हिंदी संदर्भ-भावार्थ (इन्हीं से हर श्लोक की व्याख्या करें; किसी अन्य स्रोत/स्मृति से सामग्री न मिलाएँ):
+{json.dumps(verse_source, ensure_ascii=False)}
 विशेष निर्देश: {range_instruction}
 YouTube पर इसी विषय की खोज से प्राप्त संदर्भ (केवल खोज-शब्द/प्रासंगिकता समझने हेतु; इन्हें शास्त्रीय प्रमाण न मानें):
 {json.dumps(research_context or [], ensure_ascii=False)}
