@@ -1351,13 +1351,23 @@ def generate_youtube_metadata(programme, lesson, research_context=None):
     programme_name = "शिव महापुराण" if programme == "shivpuran" else "श्रीमद्भगवद्गीता"
     suffix = "|Mahant Rajesh Kumar Tiwari"
     verse_range = str(lesson.get("verse_range", "")).strip() if programme == "bhagavadgita" else ""
+    user_source_text = str(lesson.get("user_source_text", "")).strip()
+    if len(user_source_text) > 20000:
+        raise ValueError("आपका दिया हुआ पाठ 20,000 अक्षरों से अधिक है।")
     verse_source = []
-    if verse_range:
+    if verse_range and not user_source_text:
         verse_source = fetch_gita_verse_source(
             lesson.get("chapter"),
             lesson.get("verse_start"),
             lesson.get("verse_end")
         )
+    source_instruction = (
+        "नीचे दिया गया उपयोगकर्ता का मूल अर्थ/प्रवचन-पाठ ही आज की सामग्री का एकमात्र तथ्यात्मक आधार है। "
+        "उसके अर्थ, घटनाक्रम या निष्कर्ष में अपनी ओर से कुछ न जोड़ें; भाषा, क्रम, व्याकरण और प्रस्तुति सुधार सकते हैं। "
+        "यदि पाठ में कोई श्लोक/घटना शामिल नहीं है तो उसका उल्लेख न करें।"
+        if user_source_text else
+        "उपलब्ध प्रमाणित शास्त्रीय स्रोत के आधार पर ही लिखें।"
+    )
     range_instruction = (
         f"आज केवल {verse_range} पर प्रवचन है। Title, description, tags और hashtags में यही श्लोक-सीमा स्पष्ट रखें; पूरे अध्याय का प्रवचन होने का दावा न करें।"
         if verse_range else ""
@@ -1367,8 +1377,11 @@ def generate_youtube_metadata(programme, lesson, research_context=None):
 कार्यक्रम: {programme_name}
 आज का वास्तविक पाठ/प्रसंग: {source_title}
 आज की श्लोक-सीमा: {verse_range or "लागू नहीं"}
-प्रत्येक श्लोक का मूल संस्कृत पाठ और प्रकाशित हिंदी संदर्भ-भावार्थ (इन्हीं से हर श्लोक की व्याख्या करें; किसी अन्य स्रोत/स्मृति से सामग्री न मिलाएँ):
+प्रत्येक श्लोक का मूल संस्कृत पाठ और प्रकाशित हिंदी संदर्भ-भावार्थ:
 {json.dumps(verse_source, ensure_ascii=False)}
+उपयोगकर्ता द्वारा दिया गया पूरा मूल अर्थ/प्रवचन-पाठ (यदि उपलब्ध हो, तो इसी को प्राथमिक और निर्णायक स्रोत मानें):
+{user_source_text}
+स्रोत-नियम: {source_instruction}
 विशेष निर्देश: {range_instruction}
 YouTube पर इसी विषय की खोज से प्राप्त संदर्भ (केवल खोज-शब्द/प्रासंगिकता समझने हेतु; इन्हें शास्त्रीय प्रमाण न मानें):
 {json.dumps(research_context or [], ensure_ascii=False)}
@@ -1518,6 +1531,19 @@ HASHTAGS: 4-6 सटीक विषय-आधारित hashtags।
             raise ValueError("AI ने पर्याप्त hashtags नहीं दिए")
         description += "\n\n" + " ".join(list(dict.fromkeys(hashtags))[:6])
         description += f"\n\nप्रस्तुति: {AUTHOR}\n{CHANNEL_NAME}\n{WEBSITE}\n{CHANNEL_URL}"
+        # YouTube description hard limit is 5,000 characters. Keep a safety margin.
+        if len(description) > 4900:
+            footer = f"\n\nप्रस्तुति: {AUTHOR}\n{CHANNEL_NAME}\n{WEBSITE}\n{CHANNEL_URL}"
+            body = description[:-len(footer)] if description.endswith(footer) else description
+            hashtags_line = " ".join(list(dict.fromkeys(hashtags))[:6])
+            fixed_tail = "\n\n" + hashtags_line + footer
+            available = 4900 - len(fixed_tail)
+            if available < 300:
+                raise ValueError("Description को 4,900 अक्षरों में सुरक्षित रूप से समेटना संभव नहीं हुआ")
+            body = body[:available].rsplit(" ", 1)[0].rstrip()
+            description = body + fixed_tail
+        if len(description) > 5000:
+            raise ValueError(f"YouTube description 5,000 अक्षरों से अधिक है: {len(description)}")
         log(f"{provider}: metadata तैयार; title={title!r}, description={len(description)} chars, tags={len(clean_tags)}")
         return title, description, clean_tags
     # 1) Cloudflare Workers AI
@@ -2117,6 +2143,42 @@ def main():
         if programme != "bhagavadgita":
             fail("Update Gita Chapter & Shlok के लिए programme bhagavadgita चुनें।")
         update_gita_verse_range(config, progress)
+        return
+
+    # User-pasted source text SEO generation: no YouTube API, Broadcast or progress mutation.
+    if action == "generate_seo":
+        if programme not in ("shivpuran", "bhagavadgita"):
+            fail("generate_seo के लिए PROGRAMME shivpuran या bhagavadgita चुनें।")
+        source_text = os.environ.get("SOURCE_TEXT", "").strip()
+        if not source_text:
+            fail("SOURCE_TEXT में अपना अर्थ/प्रवचन-पाठ पेस्ट करें।")
+        if len(source_text) > 20000:
+            fail(f"पेस्ट किया गया पाठ {len(source_text)} अक्षरों का है; अधिकतम 20,000 अक्षर स्वीकार हैं।")
+        lesson_index, lesson = get_next_lesson(programme, config, progress)
+        if programme == "bhagavadgita":
+            try:
+                chapter = int(os.environ.get("GITA_CHAPTER", "").strip())
+                verse_start = int(os.environ.get("GITA_VERSE_START", "").strip())
+                verse_end = int(os.environ.get("GITA_VERSE_END", "").strip())
+            except (TypeError, ValueError):
+                fail("गीता SEO के लिए अध्याय संख्या और श्लोक प्रारंभ/समाप्त भरें।")
+            verse_counts = [47,72,43,42,29,47,30,28,34,42,55,20,35,27,20,24,28,78]
+            if chapter < 1 or chapter > 18 or verse_start < 1 or verse_end < verse_start or verse_end > verse_counts[chapter - 1]:
+                fail("गीता अध्याय या श्लोक सीमा सही नहीं है।")
+            lesson["chapter"] = chapter
+            lesson["verse_start"] = verse_start
+            lesson["verse_end"] = verse_end
+            lesson["verse_range"] = f"श्लोक {verse_start}–{verse_end}"
+            lesson["title"] = f"अध्याय {chapter} — {lesson['title'].split(' — ', 1)[-1]}"
+        lesson["user_source_text"] = source_text
+        title, description, tags = generate_youtube_metadata(programme, lesson)
+        with open("generated_seo.txt", "w", encoding="utf-8") as output:
+            output.write("TITLE\n" + title + "\n\nDESCRIPTION\n" + description + "\n\nTAGS\n" + ", ".join(tags) + "\n")
+        with open("generated_seo.json", "w", encoding="utf-8") as output:
+            json.dump({"programme": programme, "lesson": lesson["title"], "title": title, "description": description, "tags": tags}, output, ensure_ascii=False, indent=2)
+        log(f"SEO तैयार: विवरण {len(description)} अक्षर; अधिकतम सीमा 5,000।")
+        log("generated_seo.txt और generated_seo.json artifacts के रूप में उपलब्ध होंगे।")
+        log("यह केवल SEO generation था: कोई Broadcast नहीं बनाया और progress नहीं बदली।")
         return
 
     # सुरक्षित metadata test: YouTube API/Broadcast/progress में कोई बदलाव नहीं।
