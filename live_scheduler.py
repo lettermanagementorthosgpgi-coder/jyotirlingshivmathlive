@@ -2168,11 +2168,12 @@ def main():
             verse_counts = [47,72,43,42,29,47,30,28,34,42,55,20,35,27,20,24,28,78]
             if chapter < 1 or chapter > 18 or verse_start < 1 or verse_end < verse_start or verse_end > verse_counts[chapter - 1]:
                 fail("गीता अध्याय या श्लोक सीमा सही नहीं है।")
+            lesson_index = chapter - 1
+            lesson = normalise_lesson(config["lessons"]["bhagavadgita"][lesson_index])
             lesson["chapter"] = chapter
             lesson["verse_start"] = verse_start
             lesson["verse_end"] = verse_end
             lesson["verse_range"] = f"श्लोक {verse_start}–{verse_end}"
-            lesson["title"] = f"अध्याय {chapter} — {lesson['title'].split(' — ', 1)[-1]}"
         lesson["user_source_text"] = source_text
         title, description, tags = generate_youtube_metadata(programme, lesson)
         with open("generated_seo.txt", "w", encoding="utf-8") as output:
