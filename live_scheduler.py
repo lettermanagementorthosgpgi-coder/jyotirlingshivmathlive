@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -1341,6 +1342,56 @@ def fetch_gita_verse_source(chapter, verse_start, verse_end):
     return verses
 
 
+
+def extract_sadhak_sanjeevani_pdf_text(chapter, verse_start, verse_end):
+    """OCR verified pages for the initial Gita chapter 1, verses 12–22 test."""
+    if (int(chapter), int(verse_start), int(verse_end)) != (1, 12, 22):
+        raise ValueError(
+            "PDF OCR का पहला सत्यापित परीक्षण अभी केवल गीता अध्याय 1, श्लोक 12–22 "
+            "के लिये उपलब्ध है। अन्य सीमा के लिये SOURCE_TEXT में मूल पाठ दें।"
+        )
+    pdf_path = "Sadhak-Sanjeevani-Hindi.pdf"
+    if not os.path.isfile(pdf_path):
+        raise FileNotFoundError("Repository में Sadhak-Sanjeevani-Hindi.pdf नहीं मिली।")
+    try:
+        import fitz
+    except ImportError as error:
+        raise RuntimeError("PDF OCR के लिये PyMuPDF उपलब्ध नहीं है।") from error
+    document = fitz.open(pdf_path)
+    first_pdf_page, last_pdf_page = 38, 45
+    if len(document) < last_pdf_page:
+        document.close()
+        raise RuntimeError("PDF के पृष्ठों की संख्या अपेक्षा से कम है।")
+    extracted_pages = []
+    try:
+        for page_number in range(first_pdf_page, last_pdf_page + 1):
+            page = document[page_number - 1]
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(1.4, 1.4), alpha=False)
+            result = subprocess.run(
+                ["tesseract", "stdin", "stdout", "-l", "hin", "--psm", "4"],
+                input=pixmap.tobytes("png"),
+                capture_output=True,
+                timeout=60,
+                check=False
+            )
+            if result.returncode != 0:
+                detail = result.stderr.decode("utf-8", errors="replace")[:500]
+                raise RuntimeError(f"PDF पृष्ठ {page_number} का हिंदी OCR विफल: {detail}")
+            page_text = result.stdout.decode("utf-8", errors="replace").strip()
+            if len(page_text) < 100:
+                raise RuntimeError(f"PDF पृष्ठ {page_number} से पर्याप्त हिंदी पाठ नहीं मिला।")
+            extracted_pages.append(
+                f"\n[साधक-संजीवनी PDF का पृष्ठ {page_number}]\n{page_text}"
+            )
+            log(f"साधक-संजीवनी OCR: PDF पृष्ठ {page_number}/{last_pdf_page} पढ़ा गया।")
+    finally:
+        document.close()
+    source_text = "\n".join(extracted_pages).strip()
+    if len(source_text) < 5000:
+        raise RuntimeError("PDF OCR से पर्याप्त स्रोत-पाठ प्राप्त नहीं हुआ; SEO रोक दिया गया।")
+    return source_text
+
+
 # ============================================================
 # GEMINI SEO METADATA GENERATION
 # ============================================================
@@ -1352,8 +1403,9 @@ def generate_youtube_metadata(programme, lesson, research_context=None):
     suffix = "|Mahant Rajesh Kumar Tiwari"
     verse_range = str(lesson.get("verse_range", "")).strip() if programme == "bhagavadgita" else ""
     user_source_text = str(lesson.get("user_source_text", "")).strip()
-    if len(user_source_text) > 20000:
-        raise ValueError("आपका दिया हुआ पाठ 20,000 अक्षरों से अधिक है।")
+    source_limit = int(lesson.get("user_source_text_limit", 20000))
+    if len(user_source_text) > source_limit:
+        raise ValueError(f"स्रोत-पाठ {source_limit:,} अक्षरों से अधिक है।")
     verse_source = []
     if verse_range and not user_source_text:
         verse_source = fetch_gita_verse_source(
@@ -2153,10 +2205,6 @@ def main():
         # GitHub's Run workflow form is single-line; accept literal \\n markers
         # so a pasted long text can preserve paragraph breaks.
         source_text = source_text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
-        if not source_text:
-            fail("SOURCE_TEXT में अपना अर्थ/प्रवचन-पाठ पेस्ट करें।")
-        if len(source_text) > 20000:
-            fail(f"पेस्ट किया गया पाठ {len(source_text)} अक्षरों का है; अधिकतम 20,000 अक्षर स्वीकार हैं।")
         lesson_index, lesson = get_next_lesson(programme, config, progress)
         if programme == "bhagavadgita":
             try:
@@ -2174,6 +2222,19 @@ def main():
             lesson["verse_start"] = verse_start
             lesson["verse_end"] = verse_end
             lesson["verse_range"] = f"श्लोक {verse_start}–{verse_end}"
+            if not source_text:
+                try:
+                    source_text = extract_sadhak_sanjeevani_pdf_text(
+                        chapter, verse_start, verse_end
+                    )
+                    lesson["user_source_text_limit"] = 40000
+                    log("स्रोत: Sadhak-Sanjeevani-Hindi.pdf से हिंदी OCR सफल।")
+                except Exception as error:
+                    fail(f"PDF से स्रोत-पाठ नहीं निकाला जा सका: {error}")
+        elif not source_text:
+            fail("SOURCE_TEXT में अपना अर्थ/प्रवचन-पाठ पेस्ट करें।")
+        if len(source_text) > (40000 if lesson.get("user_source_text_limit") else 20000):
+            fail("स्रोत-पाठ की सीमा से अधिक अक्षर हैं।")
         lesson["user_source_text"] = source_text
         title, description, tags = generate_youtube_metadata(programme, lesson)
         with open("generated_seo.txt", "w", encoding="utf-8") as output:
