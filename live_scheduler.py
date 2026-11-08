@@ -750,9 +750,9 @@ def create_thumbnail(
 
         # 1) Dynamic hook: never show a chapter-16-only message on other chapters.
         verse_range = str(lesson.get("verse_range", "")).strip()
-        hook = (
-            f"{verse_range} का अर्थ और जीवन-संदेश"
-            if verse_range else f"{chapter_name} का अर्थ और जीवन-संदेश"
+        hook = str(lesson.get("thumbnail_hook", "")).strip() or (
+            f"{verse_range} का भावार्थ"
+            if verse_range else f"{chapter_name} का भावार्थ"
         )
         hook_font = fit_font(
             draw, hook, font_path, max_width=760,
@@ -824,9 +824,8 @@ def create_thumbnail(
         # Shiv Puran: three aligned layers. The hook uses the exact same
         # horizontal bounds as the chapter and book-name plaques.
         lesson_title = str(lesson.get("title", "")).strip()
-        if "श्रीहरि और वीरभद्र का युद्ध" in lesson_title:
-            topic_hook = "जब वीरभद्र ने रोक दिया श्रीहरि का सुदर्शन चक्र!"
-        else:
+        topic_hook = str(lesson.get("thumbnail_hook", "")).strip()
+        if not topic_hook:
             topic_hook = re.sub(
                 r"^.*?\\s-\\s*", "", lesson_title, count=1
             ).strip() or lesson_title
@@ -1334,12 +1333,21 @@ YouTube पर इसी विषय की खोज से प्राप्
 प्रस्तुतकर्ता: {AUTHOR}
 वेबसाइट: {WEBSITE}
 
-इस खास प्रसंग पर आकर्षक, स्पष्ट और खोज में उपयोगी metadata लिखें। सामान्य/खाली वाक्य जैसे 'इस प्रसंग का आध्यात्मिक विवेचन सुनें' न लिखें।
-TITLE: प्रसंग के वास्तविक विषय को सीधे बताएँ। मुख्य खोज-शब्द शुरुआत में रखें। शीर्षक जिज्ञासा जगाए पर भ्रामक/सनसनीखेज न हो। 100 अक्षरों के भीतर रखें। अंत में ठीक यह suffix अनिवार्य है: |Mahant Rajesh Kumar Tiwari
-DESCRIPTION: कम से कम 180 और लगभग 300-450 शब्दों में स्वाभाविक, उपयोगी हिंदी विवरण दें। पहले 2 वाक्यों में इसी प्रसंग का सार और दर्शक को क्या जानने मिलेगा लिखें। फिर प्रसंग की पृष्ठभूमि/मुख्य घटनाक्रम को केवल दिए गए शीर्षक से समर्थित सीमा में समझाएँ; शास्त्रीय तथ्य न गढ़ें। फिर इस पाठ का महत्व, किस प्रकार के दर्शक के लिए उपयोगी है, और अंत में चैनल परिचय व subscribe अनुरोध दें। Keyword stuffing न करें।
-TAGS: 18-25 वास्तविक खोज वाक्यांश दें; Hindi और English दोनों में, विषय-विशिष्ट; generic tags कम रखें; # न लगाएँ।
-HASHTAGS: 4-6 प्रासंगिक hashtags दें।
-केवल valid JSON लौटाएँ: {{"title":"...","description":"...","tags":["..."],"hashtags":["#..."]}}
+सर्वोच्च नियम: SEO केवल आज के दिए गए श्लोक-खंड/प्रसंग पर आधारित हो। दूसरे अध्याय, दूसरी कथा, सामान्य प्रवचन, असंबद्ध जीवन-दर्शन या अनुमानित घटनाएँ न जोड़ें। जो बात दिए गए शास्त्रीय पाठ से पुष्ट न हो, उसे न लिखें।
+यदि भगवद्गीता का श्लोक-खंड दिया गया है:
+1. per_verse_notes में verse_start से verse_end तक हर श्लोक की अलग entry दें; एक भी न छोड़ें, क्रम न बदलें।
+2. हर entry में उसी श्लोक का सटीक, सरल हिंदी भावार्थ दें; श्लोकों को मिलाकर सामान्य सार न लिखें।
+3. DESCRIPTION में "श्लोक-दर-श्लोक भावार्थ" शीर्षक के नीचे सभी श्लोकों का क्रमवार सार दें। अंत में केवल इसी खंड का निष्कर्ष दें; पूरे अध्याय का प्रवचन होने का दावा न करें।
+4. verse_number संख्यात्मक हो। भावार्थ निश्चित न हो तो अनुमान न लगाएँ।
+यदि शिव पुराण का प्रसंग है:
+1. episode_points में केवल इसी प्रसंग के कम-से-कम 5 क्रमवार ठोस बिंदु दें।
+2. DESCRIPTION उन्हीं बिंदुओं का विस्तार हो। दूसरी कथा/खंड या सामान्य धार्मिक उपदेश न जोड़ें।
+TITLE: वास्तविक घटना/श्लोक-विषय शुरुआत में; खोज योग्य और जिज्ञासा-उत्पादक, भ्रामक नहीं; 100 अक्षरों के भीतर; अंत में ठीक suffix |Mahant Rajesh Kumar Tiwari।
+THUMBNAIL_HOOK: इसी पाठ के सबसे रोचक प्रमाणित तथ्य पर आधारित 3-8 शब्द; "अर्थ और जीवन-संदेश" जैसी सामान्य पंक्ति निषिद्ध।
+DESCRIPTION: गीता 300-500 शब्द और सभी श्लोकों का क्रमवार भावार्थ; शिव पुराण 250-450 शब्द और केवल उसी प्रसंग का घटनाक्रम।
+TAGS: 18-25 वास्तविक विषय-विशिष्ट खोज वाक्यांश, Hindi और English; # न लगाएँ।
+HASHTAGS: 4-6 सटीक विषय-आधारित hashtags।
+केवल valid JSON लौटाएँ: {{"title":"...","thumbnail_hook":"...","description":"...","per_verse_notes":[{{"verse_number":12,"note":"..."}}],"episode_points":["..."],"tags":["..."],"hashtags":["#..."]}}
 '''
     def extract_text(result):
         box = result.get("result", result) if isinstance(result, dict) else {}
@@ -1380,8 +1388,48 @@ HASHTAGS: 4-6 प्रासंगिक hashtags दें।
         if not title.endswith(suffix) or len(title) > 100:
             raise ValueError("Title suffix/length validation failed")
         description = str(data.get("description", "")).strip()
-        if verse_range and verse_range.casefold() not in description.casefold():
-            description = f"आज का पाठ: श्रीमद्भगवद्गीता, अध्याय {lesson.get('chapter')}, {verse_range}. इस प्रवचन में इसी श्लोक-खंड का अर्थ और भावार्थ प्रस्तुत है।\n\n" + description
+        lesson["thumbnail_hook"] = str(data.get("thumbnail_hook", "")).strip()
+        if not lesson["thumbnail_hook"] or len(lesson["thumbnail_hook"]) > 70:
+            raise ValueError("विषय-विशिष्ट thumbnail_hook नहीं मिला या बहुत लंबा है")
+
+        if verse_range:
+            expected_verses = list(range(int(lesson["verse_start"]), int(lesson["verse_end"]) + 1))
+            verse_notes = data.get("per_verse_notes")
+            if not isinstance(verse_notes, list):
+                raise ValueError("हर गीता श्लोक का अलग भावार्थ उपलब्ध नहीं")
+            actual_verses = []
+            clean_notes = []
+            for entry in verse_notes:
+                if not isinstance(entry, dict):
+                    raise ValueError("श्लोकवार भावार्थ का प्रारूप गलत है")
+                number = int(entry.get("verse_number", -1))
+                note = re.sub(r"\\s+", " ", str(entry.get("note", ""))).strip()
+                if not note:
+                    raise ValueError(f"गीता श्लोक {number} का भावार्थ खाली है")
+                actual_verses.append(number)
+                clean_notes.append((number, note))
+            if actual_verses != expected_verses:
+                raise ValueError(
+                    "श्लोकवार कवरेज अधूरी/गलत है; अपेक्षित "
+                    + str(expected_verses) + ", मिला " + str(actual_verses)
+                )
+            verse_section = "श्लोक-दर-श्लोक भावार्थ:\\n" + "\\n".join(
+                f"श्लोक {number}: {note}" for number, note in clean_notes
+            )
+            if "श्लोक-दर-श्लोक भावार्थ" not in description:
+                description += "\\n\\n" + verse_section
+            if verse_range.casefold() not in description.casefold():
+                description = f"आज का पाठ: श्रीमद्भगवद्गीता, अध्याय {lesson.get('chapter')}, {verse_range}.\\n\\n" + description
+        else:
+            episode_points = data.get("episode_points")
+            if not isinstance(episode_points, list) or len(episode_points) < 5:
+                raise ValueError("शिव पुराण के इसी प्रसंग के कम-से-कम 5 क्रमवार बिंदु आवश्यक हैं")
+            if any(not str(point).strip() for point in episode_points):
+                raise ValueError("शिव पुराण के प्रसंग-बिंदुओं में खाली प्रविष्टि है")
+            if "प्रसंग के मुख्य चरण" not in description:
+                description += "\\n\\nप्रसंग के मुख्य चरण:\\n" + "\\n".join(
+                    f"{i + 1}. {str(point).strip()}" for i, point in enumerate(episode_points)
+                )
         if len(description) < 500:
             raise ValueError(f"Description बहुत छोटा है ({len(description)} characters); दोबारा प्रयास आवश्यक")
         raw_tags = data.get("tags", [])
