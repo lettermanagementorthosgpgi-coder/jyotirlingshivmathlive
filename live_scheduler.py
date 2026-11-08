@@ -1459,8 +1459,9 @@ HASHTAGS: 4-6 सटीक विषय-आधारित hashtags।
             verse_section = "श्लोक-दर-श्लोक भावार्थ:\n" + "\n".join(
                 f"श्लोक {number}: {note}" for number, note in clean_notes
             )
-            if "श्लोक-दर-श्लोक भावार्थ" not in description:
-                description += "\n\n" + verse_section
+            # Always append the validated one-entry-per-verse section; never trust a vague AI summary alone.
+            description = description.split("श्लोक-दर-श्लोक भावार्थ:", 1)[0].rstrip()
+            description += "\n\n" + verse_section
             if verse_range.casefold() not in description.casefold():
                 description = f"आज का पाठ: श्रीमद्भगवद्गीता, अध्याय {lesson.get('chapter')}, {verse_range}.\n\n" + description
         else:
@@ -1469,10 +1470,13 @@ HASHTAGS: 4-6 सटीक विषय-आधारित hashtags।
                 raise ValueError("शिव पुराण के इसी प्रसंग के कम-से-कम 5 क्रमवार बिंदु आवश्यक हैं")
             if any(not str(point).strip() for point in episode_points):
                 raise ValueError("शिव पुराण के प्रसंग-बिंदुओं में खाली प्रविष्टि है")
-            if "प्रसंग के मुख्य चरण" not in description:
-                description += "\n\nप्रसंग के मुख्य चरण:\n" + "\n".join(
-                    f"{i + 1}. {str(point).strip()}" for i, point in enumerate(episode_points)
-                )
+            description = description.split("प्रसंग के मुख्य चरण:", 1)[0].rstrip()
+            description += "\n\nप्रसंग के मुख्य चरण:\n" + "\n".join(
+                f"{i + 1}. {str(point).strip()}" for i, point in enumerate(episode_points)
+            )
+        minimum_words = 220 if verse_range else 180
+        if len(description.split()) < minimum_words:
+            raise ValueError(f"विषय-विशिष्ट विवरण बहुत छोटा है; कम-से-कम {minimum_words} शब्द आवश्यक")
         if len(description) < 500:
             raise ValueError(f"Description बहुत छोटा है ({len(description)} characters); दोबारा प्रयास आवश्यक")
         raw_tags = data.get("tags", [])
