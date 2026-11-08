@@ -22,6 +22,7 @@ on:
           - update_time
           - test_image
           - test_metadata
+          - generate_seo
           - prepare_retry
           - retry_thumbnail
           - update_gita_range
@@ -62,6 +63,11 @@ on:
 
       gita_verse_end:
         description: "Last shloka number for today's discourse"
+        required: false
+        type: string
+
+      source_text:
+        description: "Paste today's complete meaning/discourse text (up to 20,000 characters)"
         required: false
         type: string
 
@@ -113,6 +119,7 @@ jobs:
           GITA_CHAPTER: ${{ inputs.gita_chapter }}
           GITA_VERSE_START: ${{ inputs.gita_verse_start }}
           GITA_VERSE_END: ${{ inputs.gita_verse_end }}
+          SOURCE_TEXT: ${{ inputs.source_text }}
 
           GITHUB_REPOSITORY: ${{ github.repository }}
 
@@ -127,3 +134,14 @@ jobs:
           path: generated_thumbnail.jpg
           if-no-files-found: error
           retention-days: 3
+
+      - name: Save generated SEO package for review
+        if: success() && inputs.action == 'generate_seo'
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-seo-${{ inputs.programme }}-${{ github.run_number }}
+          path: |
+            generated_seo.txt
+            generated_seo.json
+          if-no-files-found: error
+          retention-days: 7
