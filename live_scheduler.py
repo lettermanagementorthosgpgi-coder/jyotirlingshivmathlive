@@ -2150,6 +2150,9 @@ def main():
         if programme not in ("shivpuran", "bhagavadgita"):
             fail("generate_seo के लिए PROGRAMME shivpuran या bhagavadgita चुनें।")
         source_text = os.environ.get("SOURCE_TEXT", "").strip()
+        # GitHub's Run workflow form is single-line; accept literal \\n markers
+        # so a pasted long text can preserve paragraph breaks.
+        source_text = source_text.replace("\\\\r\\\\n", "\\n").replace("\\\\n", "\\n").replace("\\\\r", "\\n")
         if not source_text:
             fail("SOURCE_TEXT में अपना अर्थ/प्रवचन-पाठ पेस्ट करें।")
         if len(source_text) > 20000:
