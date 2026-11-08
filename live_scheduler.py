@@ -1403,7 +1403,7 @@ HASHTAGS: 4-6 सटीक विषय-आधारित hashtags।
                 if not isinstance(entry, dict):
                     raise ValueError("श्लोकवार भावार्थ का प्रारूप गलत है")
                 number = int(entry.get("verse_number", -1))
-                note = re.sub(r"\\s+", " ", str(entry.get("note", ""))).strip()
+                note = re.sub(r"\s+", " ", str(entry.get("note", ""))).strip()
                 if not note:
                     raise ValueError(f"गीता श्लोक {number} का भावार्थ खाली है")
                 actual_verses.append(number)
@@ -1413,13 +1413,13 @@ HASHTAGS: 4-6 सटीक विषय-आधारित hashtags।
                     "श्लोकवार कवरेज अधूरी/गलत है; अपेक्षित "
                     + str(expected_verses) + ", मिला " + str(actual_verses)
                 )
-            verse_section = "श्लोक-दर-श्लोक भावार्थ:\\n" + "\\n".join(
+            verse_section = "श्लोक-दर-श्लोक भावार्थ:\n" + "\n".join(
                 f"श्लोक {number}: {note}" for number, note in clean_notes
             )
             if "श्लोक-दर-श्लोक भावार्थ" not in description:
-                description += "\\n\\n" + verse_section
+                description += "\n\n" + verse_section
             if verse_range.casefold() not in description.casefold():
-                description = f"आज का पाठ: श्रीमद्भगवद्गीता, अध्याय {lesson.get('chapter')}, {verse_range}.\\n\\n" + description
+                description = f"आज का पाठ: श्रीमद्भगवद्गीता, अध्याय {lesson.get('chapter')}, {verse_range}.\n\n" + description
         else:
             episode_points = data.get("episode_points")
             if not isinstance(episode_points, list) or len(episode_points) < 5:
@@ -1427,7 +1427,7 @@ HASHTAGS: 4-6 सटीक विषय-आधारित hashtags।
             if any(not str(point).strip() for point in episode_points):
                 raise ValueError("शिव पुराण के प्रसंग-बिंदुओं में खाली प्रविष्टि है")
             if "प्रसंग के मुख्य चरण" not in description:
-                description += "\\n\\nप्रसंग के मुख्य चरण:\\n" + "\\n".join(
+                description += "\n\nप्रसंग के मुख्य चरण:\n" + "\n".join(
                     f"{i + 1}. {str(point).strip()}" for i, point in enumerate(episode_points)
                 )
         if len(description) < 500:
