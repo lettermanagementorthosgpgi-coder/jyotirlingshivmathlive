@@ -1,6 +1,6 @@
 {
   "shivpuran": 181,
-  "bhagavadgita": 0,
+  "bhagavadgita": 1,
   "broadcasts": {
     "shivpuran": {
       "2026-10-31": {
@@ -77,10 +77,10 @@
       "thumbnail_asset": "retry_assets/bhagavadgita_2026-11-07.jpg"
     }
   },
-  "bhagavadgita_next_title": "अध्याय 1 — अर्जुनविषादयोगः — अर्जुन के विषाद एवं मोह का योग",
+  "bhagavadgita_next_title": "अध्याय 2 — सांख्ययोगः — आत्मज्ञान एवं सांख्य दर्शन का योग",
   "bhagavadgita_verse_range": {
-    "chapter": 1,
-    "start": 23,
-    "end": 47
+    "chapter": 2,
+    "start": 1,
+    "end": 11
   }
 }
